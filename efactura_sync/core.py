@@ -67,7 +67,34 @@ NS = {
 
 
 class ConfigError(Exception):
-    """Raised when configuration or tokens are missing/invalid."""
+    """Raised when configuration or tokens are missing/invalid.
+
+    `code` is a stable machine identifier (WP3, 2026-09-17) so front ends can map
+    the error to localized copy; `str(exc)` stays the developer-facing message.
+    """
+
+    def __init__(self, message: str, code: str = "config"):
+        super().__init__(message)
+        self.code = code
+
+
+def error_code(exc: BaseException) -> str:
+    """Classify any exception raised during a sync into a stable code."""
+    if isinstance(exc, ConfigError):
+        return exc.code
+    if isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+        return "network"
+    if isinstance(exc, requests.exceptions.HTTPError):
+        return "anaf_http"
+    if isinstance(exc, zipfile.BadZipFile):
+        return "bad_download"
+    if isinstance(exc, RuntimeError):
+        text = str(exc)
+        if text.startswith("PDF conversion failed"):
+            return "pdf_failed"
+        if "ZIP" in text:
+            return "bad_download"
+    return "unknown"
 
 
 # --------------------------------------------------------------------------- #
@@ -89,6 +116,7 @@ class MessagesListed:
 @dataclass(frozen=True)
 class Notice:
     message: str
+    code: str = ""
 
 
 @dataclass(frozen=True)
@@ -119,6 +147,7 @@ class InvoiceDone:
 class SyncError:
     download_id: str
     message: str
+    code: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -158,7 +187,8 @@ def load_config(env_override: str | None = None) -> dict:
             '    "redirect_uri": "https://localhost/callback",\n'
             '    "cif": "12345678",\n'
             '    "environment": "test"\n'
-            '  }'
+            '  }',
+            code="no_config",
         )
     # Security review 2026-09-17: config.json carries client_secret but is created by
     # the user, so nothing else guarantees its mode. Tighten to 0600 if group/other
@@ -187,10 +217,12 @@ def load_config(env_override: str | None = None) -> dict:
         raise ConfigError(
             f"Missing required config value(s): {', '.join(missing)}.\n"
             f"Set them in {CONFIG_PATH} or via environment variables "
-            f"(ANAF_CLIENT_ID, ANAF_CLIENT_SECRET, ANAF_CIF). See README.md."
+            f"(ANAF_CLIENT_ID, ANAF_CLIENT_SECRET, ANAF_CIF). See README.md.",
+            code="missing_values",
         )
     if cfg["environment"] not in REST_BASE:
-        raise ConfigError(f"environment must be one of {list(REST_BASE)}")
+        raise ConfigError(f"environment must be one of {list(REST_BASE)}",
+                          code="bad_environment")
 
     cfg["cif"] = normalize_cif(cfg["cif"])
     return cfg
@@ -322,8 +354,9 @@ def extract_code(pasted: str) -> str:
     pasted = pasted.strip()
     params = parse_callback_params(pasted)
     if "error" in params:
-        raise ConfigError(_oauth_error_message(
-            params["error"][0], params.get("error_description", [""])[0]))
+        err = params["error"][0]
+        raise ConfigError(_oauth_error_message(err, params.get("error_description", [""])[0]),
+                          code=f"oauth_{err}")
     if "code" in params:
         return params["code"][0]
     return pasted
@@ -363,14 +396,16 @@ def complete_auth(cfg: dict, pending: PendingAuth, pasted: str) -> dict:
     params = parse_callback_params(pasted)
     # Report an ANAF error first: with no code, the state check is just noise.
     if "error" in params:
-        raise ConfigError(_oauth_error_message(
-            params["error"][0], params.get("error_description", [""])[0]))
+        err = params["error"][0]
+        raise ConfigError(_oauth_error_message(err, params.get("error_description", [""])[0]),
+                          code=f"oauth_{err}")
     returned_state = params.get("state", [None])[0]
     if returned_state and returned_state != pending.state:
-        raise ConfigError("State mismatch — aborting (possible CSRF). Re-run `auth`.")
+        raise ConfigError("State mismatch — aborting (possible CSRF). Re-run `auth`.",
+                          code="state_mismatch")
     code = extract_code(pasted)
     if not code:
-        raise ConfigError("No authorization code found in the pasted value.")
+        raise ConfigError("No authorization code found in the pasted value.", code="no_code")
 
     data = {
         "grant_type": "authorization_code",
@@ -383,13 +418,15 @@ def complete_auth(cfg: dict, pending: PendingAuth, pasted: str) -> dict:
     resp = requests.post(TOKEN_URL, data=data, timeout=HTTP_TIMEOUT,
                          headers={"Accept": "application/json"})
     if resp.status_code != 200:
-        raise ConfigError(f"Token exchange failed ({resp.status_code}): {resp.text}")
+        raise ConfigError(f"Token exchange failed ({resp.status_code}): {resp.text}",
+                          code="token_exchange_failed")
     return _store_token_response(resp.json())
 
 
 def refresh_tokens(cfg: dict, tokens: dict) -> dict:
     if not tokens.get("refresh_token"):
-        raise ConfigError("No refresh token available. Re-run `auth`.")
+        raise ConfigError("No refresh token available. Re-run `auth`.",
+                          code="refresh_failed")
     data = {
         "grant_type": "refresh_token",
         "refresh_token": tokens["refresh_token"],
@@ -400,7 +437,8 @@ def refresh_tokens(cfg: dict, tokens: dict) -> dict:
                          headers={"Accept": "application/json"})
     if resp.status_code != 200:
         raise ConfigError(
-            f"Token refresh failed ({resp.status_code}): {resp.text}\nRe-run `auth`."
+            f"Token refresh failed ({resp.status_code}): {resp.text}\nRe-run `auth`.",
+            code="refresh_failed",
         )
     new = resp.json()
     # ANAF may not return a new refresh token; keep the existing one if so.
@@ -411,7 +449,7 @@ def refresh_tokens(cfg: dict, tokens: dict) -> dict:
 def get_access_token(cfg: dict, force_refresh: bool = False) -> str:
     tokens = load_tokens()
     if not tokens:
-        raise ConfigError("Not authenticated. Run `auth` first.")
+        raise ConfigError("Not authenticated. Run `auth` first.", code="not_authenticated")
     expired = (
         tokens.get("expires_at") is not None
         and time.time() >= tokens["expires_at"] - TOKEN_SKEW_SECONDS
@@ -795,8 +833,14 @@ def sync(cfg: dict) -> Iterator[SyncEvent]:
         try:
             messages = _list_paginated(cfg)
         except Exception as exc:  # noqa: BLE001 — fall back to the legacy endpoint
-            yield Notice(f"Paginated listing unavailable ({exc}); using legacy endpoint.")
-            messages = _list_legacy(cfg)
+            yield Notice(f"Paginated listing unavailable ({exc}); using legacy endpoint.",
+                         code="legacy_listing")
+            try:
+                messages = _list_legacy(cfg)
+            except Exception as exc2:  # noqa: BLE001 — nothing synced; report, no last_run
+                yield SyncError("", str(exc2), error_code(exc2))
+                yield SyncFinished(0, 0, 0, 1, str(base_dir))
+                return
         yield MessagesListed(len(messages))
 
         new_count = dup_count = pdf_failed = error_count = 0
@@ -887,7 +931,7 @@ def sync(cfg: dict) -> Iterator[SyncEvent]:
 
             except Exception as exc:  # noqa: BLE001 — record and continue with next msg
                 error_count += 1
-                yield SyncError(download_id, str(exc))
+                yield SyncError(download_id, str(exc), error_code(exc))
 
         set_state(conn, "last_run", datetime.now().isoformat(timespec="seconds"))
         yield SyncFinished(new_count, dup_count, pdf_failed, error_count, str(base_dir))

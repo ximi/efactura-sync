@@ -129,6 +129,65 @@ def test_sync_records_last_run(env):
     assert core.get_state(core.connect_db(), "last_run")
 
 
+# --------------------------------------------------------------------------- #
+# WP3: errors carry machine codes so front ends can localize them
+# --------------------------------------------------------------------------- #
+
+def test_config_error_carries_code():
+    assert core.ConfigError("x", code="not_authenticated").code == "not_authenticated"
+    assert core.ConfigError("x").code == "config"
+
+
+def test_error_code_classification():
+    import requests
+    assert core.error_code(core.ConfigError("x", code="refresh_failed")) == "refresh_failed"
+    assert core.error_code(requests.exceptions.ConnectionError()) == "network"
+    assert core.error_code(requests.exceptions.Timeout()) == "network"
+    assert core.error_code(requests.exceptions.HTTPError()) == "anaf_http"
+    assert core.error_code(RuntimeError("PDF conversion failed: schema")) == "pdf_failed"
+    assert core.error_code(RuntimeError("No XML file found inside the downloaded ZIP.")) == "bad_download"
+    assert core.error_code(ValueError("?")) == "unknown"
+
+
+def test_unauthenticated_listing_is_reported_not_raised(env):
+    """Missing tokens must end as SyncError + SyncFinished(errors=1), never a traceback,
+    and must not record a last_run (nothing was synced)."""
+    class Raising:
+        def api_get(self, cfg, path, params):
+            raise core.ConfigError("Not authenticated. Run `auth` first.", code="not_authenticated")
+
+    events = env(Raising())
+    notice = of(events, core.Notice)[0]
+    assert notice.code == "legacy_listing"
+    err = of(events, core.SyncError)[0]
+    assert err.code == "not_authenticated" and err.download_id == ""
+    assert isinstance(events[-1], core.SyncFinished) and events[-1].errors == 1
+    assert core.get_state(core.connect_db(), "last_run") is None
+
+
+def test_per_invoice_network_error_has_network_code(env):
+    import requests
+    fake = two_invoices()
+    real = fake.api_get
+
+    def flaky(cfg, path, params):
+        if path == "descarcare" and params["id"] == "1001":
+            raise requests.exceptions.ConnectionError("reset")
+        return real(cfg, path, params)
+
+    fake.api_get = flaky
+    events = env(fake)
+    err = of(events, core.SyncError)[0]
+    assert err.download_id == "1001" and err.code == "network"
+
+
+def test_get_access_token_missing_has_code(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "TOKENS_PATH", tmp_path / "none.json")
+    with pytest.raises(core.ConfigError) as ei:
+        core.get_access_token({})
+    assert ei.value.code == "not_authenticated"
+
+
 def test_core_has_no_print_calls():
     """WP1 rule: core reports via events; only cli.py prints."""
     src = Path(core.__file__).read_text(encoding="utf-8")

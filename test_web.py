@@ -86,9 +86,120 @@ def harness(tmp_path, monkeypatch):
 # Pages
 # --------------------------------------------------------------------------- #
 
-def test_home_without_config_redirects_to_settings(harness):
+def test_home_without_config_redirects_to_wizard(harness):
     r = harness.client.get("/")
-    assert r.status_code == 302 and r.headers["Location"].endswith("/setari")
+    assert r.status_code == 302 and r.headers["Location"].endswith("/start")
+
+
+# --------------------------------------------------------------------------- #
+# WP3: first-run wizard
+# --------------------------------------------------------------------------- #
+
+def test_wizard_step1_explains_and_links_anaf(harness):
+    html = harness.client.get("/start").get_data(as_text=True)
+    assert "anaf.ro" in html                       # where to register the OAuth app
+    assert "/start?step=2" in html                 # next step
+    assert "certificat" in html.lower()            # what you need
+
+
+def test_wizard_step2_is_the_settings_form_leading_to_step3(harness):
+    html = harness.client.get("/start?step=2").get_data(as_text=True)
+    assert 'name="client_id"' in html and 'name="cif"' in html
+    assert 'value="/start?step=3"' in html         # hidden next
+    r = harness.post("/setari", client_id="cid", client_secret="s", cif="RO1",
+                     environment="test", redirect_uri="https://localhost/callback",
+                     base_dir=str(harness.tmp / "inv"), next="/start?step=3")
+    assert r.status_code == 303 and r.headers["Location"].endswith("/start?step=3")
+
+
+def test_wizard_step3_needs_config_then_shows_auth(harness):
+    r = harness.client.get("/start?step=3")
+    assert r.status_code == 302 and r.headers["Location"].endswith("/start?step=2")
+    harness.write_cfg()
+    html = harness.client.get("/start?step=3").get_data(as_text=True)
+    assert "Începe autentificarea" in html
+
+
+def test_settings_next_must_be_local_path(harness):
+    harness.write_cfg()
+    r = harness.post("/setari", client_id="cid", client_secret="", cif="1",
+                     environment="test", redirect_uri="x", base_dir="y",
+                     next="https://evil.example/phish")
+    assert r.status_code == 303 and "evil" not in r.headers["Location"]
+
+
+# --------------------------------------------------------------------------- #
+# WP3: no English internals reach the user
+# --------------------------------------------------------------------------- #
+
+def _engine_with(*events):
+    def engine(cfg):
+        yield core.SyncStarted("test", "1", 60)
+        yield from events
+        yield core.SyncFinished(0, 0, 0, 1, "x")
+    return engine
+
+
+def test_events_carry_localized_text(harness):
+    harness.write_cfg()
+    harness.app.runner.engine = _engine_with(
+        core.SyncError("", "Not authenticated. Run `auth` first.", "not_authenticated"))
+    events = harness.synced()
+    err = [e for e in events if e["type"] == "SyncError"][0]
+    assert "Setări" in err["text"] and "Run `auth`" not in err["text"]
+    # the same line is what the page renders after reload
+    html = harness.client.get("/").get_data(as_text=True)
+    assert err["text"] in html and "Run `auth`" not in html
+
+
+def test_events_text_follows_language(harness):
+    harness.write_cfg()
+    harness.post("/limba", lang="en")
+    harness.app.runner.engine = _engine_with(
+        core.SyncError("", "Not authenticated. Run `auth` first.", "not_authenticated"))
+    err = [e for e in harness.synced() if e["type"] == "SyncError"][0]
+    assert "Settings" in err["text"]
+
+
+def test_unknown_error_is_generic_but_keeps_detail(harness):
+    harness.write_cfg()
+    harness.app.runner.engine = _engine_with(core.SyncError("1001", "boom", "unknown"))
+    err = [e for e in harness.synced() if e["type"] == "SyncError"][0]
+    assert "boom" not in err["text"] and "neașteptat" in err["text"]
+    assert err["message"] == "boom"                # kept for technical details
+
+
+def test_notice_is_localized(harness):
+    harness.write_cfg()
+    harness.app.runner.engine = _engine_with(
+        core.Notice("Paginated listing unavailable (x); using legacy endpoint.", "legacy_listing"))
+    ev = [e for e in harness.synced() if e["type"] == "Notice"][0]
+    assert "legacy endpoint" not in ev["text"] and ev["text"]
+
+
+def test_settings_validation_errors_are_friendly(harness):
+    harness.write_cfg()
+    r = harness.post("/setari", client_id="", client_secret="", cif="abc",
+                     environment="test", redirect_uri="https://localhost/callback",
+                     base_dir=str(harness.tmp / "inv"))
+    html = r.get_data(as_text=True)
+    assert r.status_code == 400
+    assert 'name="cif"' in html                    # form re-rendered, not a bare error
+    assert "doar cifre" in html                    # cif message (ro)
+    assert "obligatoriu" in html                   # client_id required (ro)
+
+
+def test_auth_error_is_localized_with_technical_detail(harness):
+    harness.write_cfg()
+    harness.post("/auth/begin")
+    pending = harness.app.pending_auth
+    html = harness.post(
+        "/auth/complete",
+        pasted=f"https://localhost/callback?error=access_denied&state={pending.state}",
+    ).get_data(as_text=True)
+    assert "certificat" in html.lower()
+    assert "Check the certificate side" not in html   # the English hint must not leak
+    assert "access_denied" in html                     # technical detail still available
 
 
 def test_home_renders_status_in_romanian(harness):
@@ -312,10 +423,22 @@ def test_quit_calls_injected_shutdown(harness):
     assert harness.calls["shutdown"] == 1
 
 
-def test_cli_ui_subcommand_delegates_to_run_ui(harness, monkeypatch):
+def test_cli_ui_starts_without_config_so_the_wizard_can_run(harness, monkeypatch):
+    """Found live (2026-09-17): `ui` exited 2 on a fresh machine, before the wizard
+    could ever be shown. The UI must start with no config."""
+    from efactura_sync import cli, web
+    assert not (harness.tmp / "config.json").exists()
+    seen = {}
+    monkeypatch.setattr(web, "run_ui", lambda cfg, **kw: seen.setdefault("called", True))
+    assert cli.main(["ui"]) == 0
+    assert seen["called"]
+
+
+def test_cli_ui_passes_browser_flag_through(harness, monkeypatch):
     harness.write_cfg()
     from efactura_sync import cli, web
-    seen = {}
-    monkeypatch.setattr(web, "run_ui", lambda cfg, **kw: seen.setdefault("cfg", cfg))
+    seen = []
+    monkeypatch.setattr(web, "run_ui", lambda cfg, **kw: seen.append(kw.get("open_browser")))
     assert cli.main(["ui"]) == 0
-    assert seen["cfg"]["cif"] == "50000000"
+    assert cli.main(["ui", "--no-browser"]) == 0
+    assert seen == [True, False]

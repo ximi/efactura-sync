@@ -69,7 +69,7 @@ def cmd_status(cfg: dict) -> None:
                   f"{inv.supplier_name}{flag}")
 
 
-def cmd_ui(cfg: dict, open_browser: bool = True) -> None:
+def cmd_ui(cfg: dict | None, open_browser: bool = True) -> None:
     from . import web  # Flask is only imported when the UI is actually requested
     web.run_ui(cfg, open_browser=open_browser)
 
@@ -102,6 +102,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         core.ensure_config_dir()
+        if args.command == "ui":
+            # The UI has a first-run wizard, so a missing/invalid config must not
+            # stop it from starting (found live 2026-09-17).
+            cmd_ui(None, open_browser=not args.no_browser)
+            return 0
         cfg = core.load_config(env_override=args.env)
         if args.command == "auth":
             cmd_auth(cfg)
@@ -109,8 +114,6 @@ def main(argv: list[str] | None = None) -> int:
             cmd_sync(cfg)
         elif args.command == "status":
             cmd_status(cfg)
-        elif args.command == "ui":
-            cmd_ui(cfg, open_browser=not args.no_browser)
     except core.ConfigError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2

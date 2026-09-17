@@ -20,6 +20,12 @@ Dates are when the decision was made.
   callback; auto-capture is out of scope). The UI makes the paste a form field and
   renders the `access_denied` diagnosis.
 
+## Progress
+
+- WP1 done 2026-09-17 (`f05626f`). WP2 done 2026-09-17 (`3a97598`). WP3 done 2026-09-17.
+- Found live during WP3: `ui` refused to start without a config (exit 2) — fixed;
+  the UI now always starts so the wizard can run. Regression test in `test_web.py`.
+
 ## WP1 — Engine extraction (½–1 day)
 
 - Move logic into `efactura_sync/core.py` unchanged; `cli.py` owns argparse and all

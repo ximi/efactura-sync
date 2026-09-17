@@ -1,0 +1,35 @@
+{# Settings form partial. Expects: raw, errors, next_url, environments, secret_set. #}
+<form method="post" action="{{ url_for('save_settings') }}" class="stack card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
+
+  {% if errors %}<div class="flash warn-border">{{ t('val_fix') }}</div>{% endif %}
+
+  <label for="client_id">{{ t('client_id') }}</label>
+  <input id="client_id" name="client_id" value="{{ raw.get('client_id', '') }}" {{ 'aria-invalid=true' if errors.client_id }}>
+  {% if errors.client_id %}<div class="field-error">{{ errors.client_id }}</div>{% endif %}
+
+  <label for="client_secret">{{ t('client_secret') }} {% if secret_set %}<span class="muted">{{ t('secret_set') }}</span>{% endif %}</label>
+  <input id="client_secret" name="client_secret" type="password" value="" autocomplete="off"
+         placeholder="{{ t('secret_keep') if secret_set else '' }}">
+
+  <label for="cif">{{ t('cif') }} <span class="hint">({{ t('cif_hint') }})</span></label>
+  <input id="cif" name="cif" value="{{ raw.get('cif', '') }}" {{ 'aria-invalid=true' if errors.cif }}>
+  {% if errors.cif %}<div class="field-error">{{ errors.cif }}</div>{% endif %}
+
+  <label for="environment">{{ t('environment') }}</label>
+  <select id="environment" name="environment">
+    {% for env in environments %}
+      <option value="{{ env }}" {{ 'selected' if raw.get('environment', 'test') == env }}>{{ t('environment_' + env) }}</option>
+    {% endfor %}
+  </select>
+  {% if errors.environment %}<div class="field-error">{{ errors.environment }}</div>{% endif %}
+
+  <label for="redirect_uri">{{ t('redirect_uri') }}</label>
+  <input id="redirect_uri" name="redirect_uri" value="{{ raw.get('redirect_uri', 'https://localhost/callback') }}">
+
+  <label for="base_dir">{{ t('base_dir') }}</label>
+  <input id="base_dir" name="base_dir" value="{{ raw.get('base_dir', '') }}">
+
+  <div style="margin-top: 16px;"><button class="primary" type="submit">{{ t('wiz_next') if next_url else t('save') }}</button></div>
+</form>

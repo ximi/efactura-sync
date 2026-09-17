@@ -22,7 +22,7 @@
 </div>
 
 <h2>{{ t('log') }}</h2>
-<div class="log" id="log">{% for e in events %}{{ e | tojson }}
+<div class="log" id="log">{% for line in lines %}{{ line }}
 {% endfor %}</div>
 
 {% if report.recent %}
@@ -42,39 +42,18 @@
 </table>
 {% endif %}
 
+{% if running %}
 <script>
 (function () {
-  const S = {{ {
-    'ev_started': t('ev_started'), 'ev_listed': t('ev_listed'), 'ev_done': t('ev_done'),
-    'ev_dup': t('ev_dup'), 'ev_pdf_failed': t('ev_pdf_failed'), 'ev_error': t('ev_error'),
-    'ev_error_run': t('ev_error_run'), 'ev_notice': t('ev_notice'), 'ev_finished': t('ev_finished')
-  } | tojson }};
-  const fmt = (s, v) => s.replace(/\{(\w+)\}/g, (_, k) => (v[k] ?? ''));
-  function line(e) {
-    switch (e.type) {
-      case 'SyncStarted':   return fmt(S.ev_started, {days: e.lookback_days, env: e.environment, cif: e.cif});
-      case 'MessagesListed':return fmt(S.ev_listed, {count: e.count});
-      case 'Notice':        return fmt(S.ev_notice, e);
-      case 'Duplicate':     return fmt(S.ev_dup, {id: e.download_id});
-      case 'PdfFailed':     return '! ' + fmt(S.ev_pdf_failed, {invoice: e.invoice_id, message: e.message});
-      case 'InvoiceDone':   return (e.pdf_ok ? '✓ ' : '· ') + fmt(S.ev_done, {invoice: e.invoice_id, supplier: e.supplier_name, date: e.issue_date || ''});
-      case 'SyncError':     return '✗ ' + (e.download_id
-                              ? fmt(S.ev_error, {id: e.download_id, message: e.message})
-                              : fmt(S.ev_error_run, {message: e.message}));
-      case 'SyncFinished':  return fmt(S.ev_finished, {new: e.new, dup: e.duplicates, pdf: e.pdf_failed, err: e.errors});
-      default:              return JSON.stringify(e);
-    }
-  }
   const log = document.getElementById('log');
-  // Server-rendered raw events → readable lines.
-  const raw = log.textContent.trim().split('\n').filter(Boolean);
-  log.textContent = raw.map(l => { try { return line(JSON.parse(l)); } catch (_) { return l; } }).join('\n');
-  {% if running %}
   const es = new EventSource('{{ url_for('sync_events') }}');
   log.textContent = '';
-  es.onmessage = ev => { log.textContent += line(JSON.parse(ev.data)) + '\n'; log.scrollTop = log.scrollHeight; };
+  es.onmessage = ev => {
+    log.textContent += JSON.parse(ev.data).text + '\n';
+    log.scrollTop = log.scrollHeight;
+  };
   es.addEventListener('done', () => { es.close(); setTimeout(() => location.reload(), 600); });
-  {% endif %}
 })();
 </script>
+{% endif %}
 {% endblock %}

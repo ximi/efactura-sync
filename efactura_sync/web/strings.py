@@ -59,17 +59,63 @@ STRINGS = {
         "auth_complete": "Finalizează",
         "auth_ok": "Autentificare reușită.",
         "error": "Eroare",
+        "tech_details": "Detalii tehnice",
         "language": "Limbă",
         "quit": "Închide aplicația",
         "quit_bye": "Aplicația s-a închis. Poți închide această fereastră.",
+        # first-run wizard
+        "wiz_title": "Configurare inițială",
+        "wiz_step": "Pasul {n} din 3",
+        "wiz_need_title": "De ce ai nevoie",
+        "wiz_need_cert": "Un certificat digital calificat (DigiSign, certSIGN, AlfaTrust…) înregistrat în SPV pentru firma ta, cu e-Factura activată.",
+        "wiz_need_app": "O aplicație OAuth înregistrată la ANAF, din care obții Client ID și Client secret:",
+        "wiz_app_1": "Intră pe anaf.ro → Servicii online → Înregistrare aplicații developeri → Înregistrare în vederea accesării serviciilor web.",
+        "wiz_app_2": "Autentifică-te în SPV (certificat sau utilizator/parolă).",
+        "wiz_app_3": "Creează un profil OAuth: nume aplicație, Callback URL (folosește https://localhost/callback) și bifează serviciul EFACTURA.",
+        "wiz_app_4": "Generează și copiază Client ID și Client secret — le introduci la pasul următor.",
+        "wiz_next": "Continuă",
+        "wiz_step2_intro": "Introdu datele aplicației și ale firmei. Poți începe cu mediul Test.",
+        "wiz_step3_intro": "Ultimul pas: autentifică-te la ANAF cu certificatul. Este necesar o singură dată la câteva luni.",
+        "wiz_done": "Gata. Poți sincroniza facturile din pagina Acasă.",
+        # validation
+        "val_required": "Câmp obligatoriu.",
+        "val_cif_digits": "CIF: doar cifre (fără RO).",
+        "val_environment": "Mediu invalid.",
+        "val_fix": "Corectează câmpurile marcate.",
+        # error headlines by code
+        "err_not_authenticated": "Nu ești autentificat la ANAF. Mergi la Setări → Autentificare ANAF.",
+        "err_refresh_failed": "Sesiunea ANAF a expirat. Autentifică-te din nou în Setări.",
+        "err_token_exchange_failed": "ANAF a respins codul de autorizare. Reia autentificarea.",
+        "err_state_mismatch": "Adresa lipită nu corespunde acestei sesiuni. Reia autentificarea.",
+        "err_no_code": "Nu am găsit codul de autorizare în adresa lipită. Copiază adresa completă din bara de adrese.",
+        "err_no_config": "Setările sunt incomplete. Completează-le în Setări.",
+        "err_missing_values": "Setările sunt incomplete. Completează-le în Setări.",
+        "err_bad_environment": "Mediul configurat este invalid. Alege Test sau Producție în Setări.",
+        "err_network": "Nu s-a putut contacta ANAF. Verifică conexiunea la internet și încearcă din nou.",
+        "err_anaf_http": "ANAF a răspuns cu o eroare. Încearcă din nou mai târziu.",
+        "err_pdf_failed": "Conversia în PDF a eșuat; fișierul XML a fost păstrat.",
+        "err_bad_download": "Fișierul descărcat de la ANAF este invalid.",
+        "err_unknown": "A apărut o eroare neașteptată.",
+        "err_oauth_access_denied": (
+            "ANAF a refuzat accesul: autentificarea cu certificatul nu s-a finalizat. "
+            "Client ID și Callback URL sunt corecte (altfel ANAF nu ar fi redirecționat înapoi). Verifică:\n"
+            "1. Tokenul USB este conectat și driverul/middleware-ul rulează?\n"
+            "2. Browserul ți-a cerut să ALEGI un certificat? Fără fereastra de selecție, autentificarea eșuează — dezactivează blocarea pop-up-urilor.\n"
+            "3. Autentifică-te mai întâi pe pfinternet.anaf.ro cu certificatul, apoi deschide adresa de autorizare în ACELAȘI browser.\n"
+            "4. Certificatul este înregistrat în SPV cu drepturi pentru acest CIF și e-Factura este activată?\n"
+            "5. ANAF recomandă Windows + Chrome; pe macOS middleware-ul certificatului cauzează frecvent lipsa ferestrei de selecție."
+        ),
+        "err_oauth_invalid_client": "ANAF nu a acceptat Client ID. Verifică-l în profilul OAuth din portalul ANAF (și că serviciul EFACTURA este bifat).",
+        "err_oauth_invalid_request": "ANAF a respins cererea. Cel mai des, Callback URL din Setări nu este identic cu cel înregistrat la ANAF (slash final, http vs https).",
+        "err_oauth_other": "ANAF a returnat eroarea „{code}”.",
+        # notices
+        "notice_legacy_listing": "Listarea paginată nu este disponibilă; se folosește varianta clasică.",
+        # log lines
         "ev_started": "Se listează facturile primite din ultimele {days} zile ({env}, CIF {cif})…",
         "ev_listed": "{count} mesaj(e) returnate de ANAF.",
         "ev_done": "{invoice} — {supplier} ({date})",
         "ev_dup": "Ignorat (deja descărcat): {id}",
-        "ev_pdf_failed": "PDF nereușit pentru {invoice}: {message}",
-        "ev_error": "Eroare la {id}: {message}",
-        "ev_error_run": "Eroare: {message}",
-        "ev_notice": "{message}",
+        "ev_pdf_failed": "{invoice}: conversia în PDF a eșuat, XML păstrat.",
         "ev_finished": "Gata: {new} noi, {dup} duplicate, {pdf} PDF nereușite, {err} erori.",
     },
     "en": {
@@ -129,17 +175,58 @@ STRINGS = {
         "auth_complete": "Complete",
         "auth_ok": "Authentication successful.",
         "error": "Error",
+        "tech_details": "Technical details",
         "language": "Language",
         "quit": "Quit the app",
         "quit_bye": "The app has quit. You can close this window.",
+        "wiz_title": "First-time setup",
+        "wiz_step": "Step {n} of 3",
+        "wiz_need_title": "What you need",
+        "wiz_need_cert": "A qualified digital certificate (DigiSign, certSIGN, AlfaTrust…) registered in SPV for your company, with e-Factura enabled.",
+        "wiz_need_app": "An OAuth application registered with ANAF, which gives you a Client ID and Client secret:",
+        "wiz_app_1": "Go to anaf.ro → Online services → Developer application registration → Register to access web services.",
+        "wiz_app_2": "Log in to SPV (certificate or username/password).",
+        "wiz_app_3": "Create an OAuth profile: application name, Callback URL (use https://localhost/callback) and tick the EFACTURA service.",
+        "wiz_app_4": "Generate and copy the Client ID and Client secret — you enter them in the next step.",
+        "wiz_next": "Continue",
+        "wiz_step2_intro": "Enter your application and company details. You can start with the Test environment.",
+        "wiz_step3_intro": "Last step: authenticate with ANAF using your certificate. Needed only once every few months.",
+        "wiz_done": "Done. You can synchronize invoices from the Home page.",
+        "val_required": "Required field.",
+        "val_cif_digits": "CIF: digits only (no RO).",
+        "val_environment": "Invalid environment.",
+        "val_fix": "Fix the highlighted fields.",
+        "err_not_authenticated": "Not authenticated with ANAF. Go to Settings → ANAF authentication.",
+        "err_refresh_failed": "Your ANAF session has expired. Authenticate again in Settings.",
+        "err_token_exchange_failed": "ANAF rejected the authorization code. Start the authentication again.",
+        "err_state_mismatch": "The pasted address does not belong to this session. Start the authentication again.",
+        "err_no_code": "No authorization code found in the pasted address. Copy the full address from the address bar.",
+        "err_no_config": "Settings are incomplete. Fill them in under Settings.",
+        "err_missing_values": "Settings are incomplete. Fill them in under Settings.",
+        "err_bad_environment": "The configured environment is invalid. Choose Test or Production in Settings.",
+        "err_network": "Could not reach ANAF. Check your internet connection and try again.",
+        "err_anaf_http": "ANAF responded with an error. Try again later.",
+        "err_pdf_failed": "PDF conversion failed; the XML file was kept.",
+        "err_bad_download": "The file downloaded from ANAF is invalid.",
+        "err_unknown": "An unexpected error occurred.",
+        "err_oauth_access_denied": (
+            "ANAF denied access: the certificate authentication did not complete. "
+            "Your Client ID and Callback URL are fine (ANAF would not have redirected back otherwise). Check:\n"
+            "1. Is the USB token plugged in and its driver/middleware running?\n"
+            "2. Did the browser ask you to CHOOSE a certificate? No selection dialog means the failure — disable the popup blocker.\n"
+            "3. Log in to pfinternet.anaf.ro with the certificate first, then open the authorization address in the SAME browser.\n"
+            "4. Is the certificate registered in SPV with rights for this CIF, and is e-Factura enabled?\n"
+            "5. ANAF recommends Windows + Chrome; on macOS the certificate middleware often causes the missing selection dialog."
+        ),
+        "err_oauth_invalid_client": "ANAF did not accept the Client ID. Check it in the OAuth profile on the ANAF portal (and that the EFACTURA service is ticked).",
+        "err_oauth_invalid_request": "ANAF rejected the request. Most often the Callback URL in Settings is not identical to the one registered with ANAF (trailing slash, http vs https).",
+        "err_oauth_other": "ANAF returned the error “{code}”.",
+        "notice_legacy_listing": "Paginated listing is unavailable; using the classic listing.",
         "ev_started": "Listing received invoices from the last {days} days ({env}, CIF {cif})…",
         "ev_listed": "{count} message(s) returned by ANAF.",
         "ev_done": "{invoice} — {supplier} ({date})",
         "ev_dup": "Skipped (already downloaded): {id}",
-        "ev_pdf_failed": "PDF failed for {invoice}: {message}",
-        "ev_error": "Error on {id}: {message}",
-        "ev_error_run": "Error: {message}",
-        "ev_notice": "{message}",
+        "ev_pdf_failed": "{invoice}: PDF conversion failed, XML kept.",
         "ev_finished": "Done: {new} new, {dup} duplicates, {pdf} PDF failures, {err} errors.",
     },
 }
@@ -147,11 +234,18 @@ STRINGS = {
 LANGUAGES = tuple(STRINGS)
 
 
-def translator(lang: str):
-    table = STRINGS.get(lang) or STRINGS["ro"]
+class Translator:
+    def __init__(self, lang: str):
+        self.lang = lang if lang in STRINGS else "ro"
+        self.table = STRINGS[self.lang]
 
-    def t(key: str, **fmt) -> str:
-        text = table.get(key) or STRINGS["ro"].get(key, key)
+    def has(self, key: str) -> bool:
+        return key in self.table or key in STRINGS["ro"]
+
+    def __call__(self, key: str, **fmt) -> str:
+        text = self.table.get(key) or STRINGS["ro"].get(key, key)
         return text.format(**fmt) if fmt else text
 
-    return t
+
+def translator(lang: str) -> Translator:
+    return Translator(lang)

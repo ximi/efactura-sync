@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ t('wiz_title') }} · {{ t('app') }}{% endblock %}
+{% block content %}
+<p class="muted" style="margin:0">{{ t('wiz_step', n=step) }}</p>
+<h1>{{ t('wiz_title') }}</h1>
+
+{% if step == 1 %}
+  <div class="card">
+    <h2 style="margin-top:0">{{ t('wiz_need_title') }}</h2>
+    <ol>
+      <li>{{ t('wiz_need_cert') }}</li>
+      <li>{{ t('wiz_need_app') }}
+        <ol type="a">
+          <li>{{ t('wiz_app_1') }}<br>
+            <a href="https://www.anaf.ro/anaf/internet/ANAF/servicii_online/inreg_api" target="_blank" rel="noopener">anaf.ro → Înregistrare API</a></li>
+          <li>{{ t('wiz_app_2') }}</li>
+          <li>{{ t('wiz_app_3') }}</li>
+          <li>{{ t('wiz_app_4') }}</li>
+        </ol>
+      </li>
+    </ol>
+  </div>
+  <p style="margin-top: 16px;"><a class="btn" href="{{ url_for('start', step=2) }}">{{ t('wiz_next') }}</a></p>
+
+{% elif step == 2 %}
+  <p>{{ t('wiz_step2_intro') }}</p>
+  {% include "_settings_form.html" %}
+
+{% else %}
+  <p>{{ t('wiz_step3_intro') }}</p>
+  {% include "_auth.html" %}
+{% endif %}
+{% endblock %}

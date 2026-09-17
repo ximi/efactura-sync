@@ -1,5 +1,6 @@
 """Local web UI over the engine. Three pages (decision 2026-09-17): Acasă, Facturi,
-Setări. Served on 127.0.0.1 only and opened in the default browser.
+Setări, plus a first-run wizard at /start. Served on 127.0.0.1 only and opened in
+the default browser.
 
 Safety model for a localhost server (risk 4 in TODO.md): a per-run CSRF token on
 every POST, a foreign-Origin refusal, a Host allow-list against DNS rebinding, the
@@ -8,6 +9,7 @@ by a client-supplied path.
 """
 
 import dataclasses
+import json
 import secrets
 import socket
 import subprocess
@@ -23,6 +25,7 @@ from flask import (Flask, Response, abort, flash, redirect, render_template, req
                    send_file, url_for)
 
 from .. import __version__, core
+from .errors import describe, render_event, technical_detail
 from .strings import LANGUAGES, translator
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
@@ -68,7 +71,8 @@ class SyncRunner:
             for ev in self.engine(cfg):
                 self.events.append(_serialize(ev))
         except Exception as exc:  # noqa: BLE001 — surface as an event, never a 500
-            self.events.append({"type": "SyncError", "download_id": "", "message": str(exc)})
+            self.events.append({"type": "SyncError", "download_id": "", "message": str(exc),
+                                "code": core.error_code(exc)})
         finally:
             self._done.set()
 
@@ -100,6 +104,13 @@ def open_path_default(path) -> None:
             os_startfile(path)
     else:
         subprocess.Popen(["xdg-open", path])
+
+
+def _safe_next(value: str | None, fallback: str) -> str:
+    """Only same-app paths may be redirect targets."""
+    if value and value.startswith("/") and not value.startswith("//"):
+        return value
+    return fallback
 
 
 # --------------------------------------------------------------------------- #
@@ -137,6 +148,9 @@ def create_app(open_path=None, shutdown=None) -> Flask:
         value = core.read_config_raw().get("language", "ro")
         return value if value in LANGUAGES else "ro"
 
+    def t():
+        return translator(lang())
+
     @app.context_processor
     def inject():
         current = lang()
@@ -148,21 +162,37 @@ def create_app(open_path=None, shutdown=None) -> Flask:
         try:
             return core.load_config(), None
         except core.ConfigError:
-            flash(translator(lang())("config_needed"), "info")
-            return None, redirect(url_for("settings"))
+            return None, redirect(url_for("start"))
 
     def fmt_ts(ts) -> str:
         return datetime.fromtimestamp(ts).strftime("%Y-%m-%d") if ts else ""
 
-    def render_settings(status=200, auth_error=None):
+    def form_ctx(errors=None, next_url=None, values=None) -> dict:
         raw = core.read_config_raw()
+        if values:
+            raw = {**raw, **values}
+        return {"raw": raw, "errors": errors or {}, "next_url": next_url,
+                "environments": list(core.REST_BASE),
+                "secret_set": bool(core.read_config_raw().get("client_secret"))}
+
+    def auth_ctx(auth_exc: core.ConfigError | None = None, wizard=False) -> dict:
         tok = core.token_status()
-        return render_template(
-            "settings.html", raw=raw, environments=list(core.REST_BASE),
-            secret_set=bool(raw.get("client_secret")), auth=tok,
-            auth_expires=fmt_ts(tok["expires_at"]), pending=app.pending_auth,
-            auth_error=auth_error, languages=LANGUAGES,
-        ), status
+        return {"auth": tok, "auth_expires": fmt_ts(tok["expires_at"]),
+                "pending": app.pending_auth, "wizard": wizard,
+                "auth_error": describe(auth_exc.code, t()) if auth_exc else None,
+                "auth_detail": technical_detail(str(auth_exc)) if auth_exc else None}
+
+    def render_settings(status=200, auth_exc=None, errors=None, values=None):
+        return render_template("settings.html", **form_ctx(errors, None, values),
+                               **auth_ctx(auth_exc)), status
+
+    def render_wizard(step: int, status=200, auth_exc=None, errors=None, values=None):
+        ctx = {"step": step}
+        if step == 2:
+            ctx.update(form_ctx(errors, url_for("start", step=3), values))
+        if step == 3:
+            ctx.update(auth_ctx(auth_exc, wizard=True))
+        return render_template("start.html", **ctx), status
 
     # ---- pages ----------------------------------------------------------- #
 
@@ -172,7 +202,19 @@ def create_app(open_path=None, shutdown=None) -> Flask:
         if resp:
             return resp
         report = core.status_report(cfg)
-        return render_template("home.html", report=report, events=app.runner.events)
+        tr = t()
+        lines = [render_event(e, tr) for e in app.runner.events]
+        return render_template("home.html", report=report, lines=lines)
+
+    @app.get("/start")
+    def start():
+        step = request.args.get("step", 1, type=int)
+        if step == 3:
+            try:
+                core.load_config()
+            except core.ConfigError:
+                return redirect(url_for("start", step=2))
+        return render_wizard(step if step in (1, 2, 3) else 1)
 
     @app.get("/facturi")
     def invoices():
@@ -205,17 +247,18 @@ def create_app(open_path=None, shutdown=None) -> Flask:
         if resp:
             return resp
         if not app.runner.start(cfg):
-            return translator(lang())("sync_busy"), 409
+            return t()("sync_busy"), 409
         return redirect(url_for("home"), code=303)
 
     @app.get("/sync/events")
     def sync_events():
         since = request.args.get("since", 0, type=int)
+        tr = t()
 
         def generate():
-            import json
             for ev in app.runner.stream(since):
-                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+                payload = {**ev, "text": render_event(ev, tr)}
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             yield "event: done\ndata: {}\n\n"
 
         return Response(generate(), mimetype="text/event-stream",
@@ -231,24 +274,38 @@ def create_app(open_path=None, shutdown=None) -> Flask:
 
     @app.post("/setari")
     def save_settings():
-        raw = core.read_config_raw()
+        tr = t()
         form = request.form
-        environment = form.get("environment", "").strip()
-        if environment not in core.REST_BASE:
-            return translator(lang())("error"), 400
-        raw.update({
+        next_url = _safe_next(form.get("next"), url_for("settings"))
+        values = {
             "client_id": form.get("client_id", "").strip(),
             "cif": core.normalize_cif(form.get("cif", "")),
-            "environment": environment,
+            "environment": form.get("environment", "").strip(),
             "redirect_uri": form.get("redirect_uri", "").strip(),
             "base_dir": form.get("base_dir", "").strip(),
-        })
+        }
+        errors = {}
+        if not values["client_id"]:
+            errors["client_id"] = tr("val_required")
+        if not values["cif"]:
+            errors["cif"] = tr("val_required")
+        elif not values["cif"].isdigit():
+            errors["cif"] = tr("val_cif_digits")
+        if values["environment"] not in core.REST_BASE:
+            errors["environment"] = tr("val_environment")
+        if errors:
+            if next_url.startswith("/start"):
+                return render_wizard(2, 400, errors=errors, values=values)
+            return render_settings(400, errors=errors, values=values)
+
+        raw = core.read_config_raw()
+        raw.update(values)
         secret = form.get("client_secret", "")
         if secret:                                   # blank keeps the stored secret
             raw["client_secret"] = secret
         core.save_config(raw)
-        flash(translator(lang())("settings_saved"), "ok")
-        return redirect(url_for("settings"), code=303)
+        flash(tr("settings_saved"), "ok")
+        return redirect(next_url, code=303)
 
     @app.post("/limba")
     def set_language():
@@ -258,7 +315,7 @@ def create_app(open_path=None, shutdown=None) -> Flask:
         raw = core.read_config_raw()
         raw["language"] = value
         core.save_config(raw)
-        return redirect(request.form.get("next") or url_for("home"), code=303)
+        return redirect(_safe_next(request.form.get("next"), url_for("home")), code=303)
 
     @app.post("/auth/begin")
     def auth_begin():
@@ -266,6 +323,8 @@ def create_app(open_path=None, shutdown=None) -> Flask:
         if resp:
             return resp
         app.pending_auth = core.begin_auth(cfg)
+        if request.form.get("wizard"):
+            return render_wizard(3)
         return render_settings()
 
     @app.post("/auth/complete")
@@ -275,13 +334,16 @@ def create_app(open_path=None, shutdown=None) -> Flask:
             return resp
         if app.pending_auth is None:
             abort(400)
+        wizard = bool(request.form.get("wizard"))
         try:
             core.complete_auth(cfg, app.pending_auth, request.form.get("pasted", ""))
         except core.ConfigError as exc:
-            return render_settings(auth_error=str(exc))
+            if wizard:
+                return render_wizard(3, auth_exc=exc)
+            return render_settings(auth_exc=exc)
         app.pending_auth = None
-        flash(translator(lang())("auth_ok"), "ok")
-        return redirect(url_for("settings"), code=303)
+        flash(t()("wiz_done" if wizard else "auth_ok"), "ok")
+        return redirect(url_for("home") if wizard else url_for("settings"), code=303)
 
     @app.post("/iesire")
     def quit_app():
