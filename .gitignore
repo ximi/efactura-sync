@@ -9,6 +9,7 @@ tokens.json
 venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Local tooling / OS
 .claude/settings.local.json

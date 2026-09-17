@@ -112,6 +112,17 @@ Useful flags: `--env prod|test` (override environment), `--config /path/to/confi
 - **Test first**: run with `"environment": "test"` to validate your setup before
   switching to `prod`.
 
+## Development
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+The engine lives in `efactura_sync/core.py` and reports progress as events;
+`efactura_sync/cli.py` is the terminal front end. `anaf_invoices.py` is a thin
+compatibility shim.
+
 ## Files & locations
 
 | Path | Purpose |
