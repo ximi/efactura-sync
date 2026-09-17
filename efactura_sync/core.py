@@ -192,9 +192,31 @@ def load_config(env_override: str | None = None) -> dict:
     if cfg["environment"] not in REST_BASE:
         raise ConfigError(f"environment must be one of {list(REST_BASE)}")
 
-    # Normalize CIF: strip a leading RO and any whitespace.
-    cfg["cif"] = re.sub(r"^RO", "", cfg["cif"], flags=re.IGNORECASE).strip()
+    cfg["cif"] = normalize_cif(cfg["cif"])
     return cfg
+
+
+def normalize_cif(value: str) -> str:
+    """ANAF wants the bare number: strip a leading RO and whitespace."""
+    return re.sub(r"^RO", "", str(value or "").strip(), flags=re.IGNORECASE).strip()
+
+
+def read_config_raw() -> dict:
+    """The config file as written, without validation. {} if absent (WP2: settings form)."""
+    if not CONFIG_PATH.exists():
+        return {}
+    with CONFIG_PATH.open(encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def save_config(raw: dict) -> None:
+    """Atomically write config.json with owner-only permissions."""
+    ensure_config_dir()
+    tmp = CONFIG_PATH.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(raw, fh, indent=2, ensure_ascii=False)
+    os.chmod(tmp, 0o600)
+    tmp.replace(CONFIG_PATH)
 
 
 def load_tokens() -> dict | None:
@@ -535,6 +557,54 @@ def get_state(conn: sqlite3.Connection, key: str) -> str | None:
     cur = conn.execute("SELECT value FROM sync_state WHERE key = ?", (key,))
     row = cur.fetchone()
     return row["value"] if row else None
+
+
+def list_invoices(month: str | None = None, supplier: str | None = None) -> list[dict]:
+    """Invoices for the UI table, newest first. month = 'YYYY-MM', supplier = substring."""
+    conn = connect_db()
+    try:
+        rows = conn.execute(
+            "SELECT download_id, invoice_id, supplier_name, supplier_cif, issue_date, "
+            "doc_type, pdf_ok, pdf_path FROM invoices "
+            "WHERE (? = '' OR substr(issue_date, 1, 7) = ?) "
+            "AND (? = '' OR lower(supplier_name) LIKE ?) "
+            "ORDER BY issue_date DESC, downloaded_at DESC",
+            (month or "", month or "", supplier or "", f"%{(supplier or '').lower()}%"),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def invoice_months() -> list[str]:
+    conn = connect_db()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT substr(issue_date, 1, 7) AS m FROM invoices "
+            "WHERE issue_date IS NOT NULL ORDER BY m DESC"
+        ).fetchall()
+        return [r["m"] for r in rows if r["m"]]
+    finally:
+        conn.close()
+
+
+def invoice_by_download_id(download_id: str) -> dict | None:
+    conn = connect_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM invoices WHERE download_id = ?", (download_id,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def token_status() -> dict:
+    """Whether we hold tokens and when the access token nominally expires."""
+    tokens = load_tokens()
+    if not tokens or not tokens.get("access_token"):
+        return {"authenticated": False, "expires_at": None}
+    return {"authenticated": True, "expires_at": tokens.get("expires_at")}
 
 
 # --------------------------------------------------------------------------- #

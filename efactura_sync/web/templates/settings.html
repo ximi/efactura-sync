@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}{{ t('settings') }} · {{ t('app') }}{% endblock %}
+{% block content %}
+<h1>{{ t('settings') }}</h1>
+
+<form method="post" action="{{ url_for('save_settings') }}" class="stack card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+
+  <label for="client_id">{{ t('client_id') }}</label>
+  <input id="client_id" name="client_id" value="{{ raw.get('client_id', '') }}" required>
+
+  <label for="client_secret">{{ t('client_secret') }} {% if secret_set %}<span class="muted">{{ t('secret_set') }}</span>{% endif %}</label>
+  <input id="client_secret" name="client_secret" type="password" value="" autocomplete="off"
+         placeholder="{{ t('secret_keep') if secret_set else '' }}">
+
+  <label for="cif">{{ t('cif') }} <span class="hint">({{ t('cif_hint') }})</span></label>
+  <input id="cif" name="cif" value="{{ raw.get('cif', '') }}" required>
+
+  <label for="environment">{{ t('environment') }}</label>
+  <select id="environment" name="environment">
+    {% for env in environments %}
+      <option value="{{ env }}" {{ 'selected' if raw.get('environment', 'test') == env }}>{{ t('environment_' + env) }}</option>
+    {% endfor %}
+  </select>
+
+  <label for="redirect_uri">{{ t('redirect_uri') }}</label>
+  <input id="redirect_uri" name="redirect_uri" value="{{ raw.get('redirect_uri', 'https://localhost/callback') }}">
+
+  <label for="base_dir">{{ t('base_dir') }}</label>
+  <input id="base_dir" name="base_dir" value="{{ raw.get('base_dir', '') }}">
+
+  <div style="margin-top: 16px;"><button class="primary" type="submit">{{ t('save') }}</button></div>
+</form>
+
+<h2>{{ t('auth') }}</h2>
+<div class="card">
+  <p>
+    {% if auth.authenticated %}
+      <span class="ok">● {{ t('auth_yes') }}</span>
+      {% if auth_expires %}<span class="muted"> · {{ t('expires') }} {{ auth_expires }}</span>{% endif %}
+    {% else %}
+      <span class="warn">● {{ t('auth_no') }}</span>
+    {% endif %}
+  </p>
+
+  {% if auth_error %}
+    <div class="flash"><strong>{{ t('error') }}:</strong>
+      <pre style="white-space: pre-wrap; margin: 6px 0 0;">{{ auth_error }}</pre></div>
+  {% endif %}
+
+  {% if pending %}
+    <ol>
+      <li>{{ t('auth_step1') }}<div class="url"><a href="{{ pending.url }}" target="_blank" rel="noopener">{{ pending.url }}</a></div></li>
+      <li>{{ t('auth_step2') }}</li>
+      <li>{{ t('auth_step3') }}</li>
+    </ol>
+    <form method="post" action="{{ url_for('auth_complete') }}" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label for="pasted">{{ t('paste') }}</label>
+      <textarea id="pasted" name="pasted" rows="3" required></textarea>
+      <div style="margin-top: 10px;"><button class="primary" type="submit">{{ t('auth_complete') }}</button></div>
+    </form>
+  {% else %}
+    <form method="post" action="{{ url_for('auth_begin') }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit">{{ t('auth_begin') }}</button>
+    </form>
+  {% endif %}
+</div>
+
+<form method="post" action="{{ url_for('quit_app') }}" style="margin-top: 32px;">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button type="submit">{{ t('quit') }}</button>
+</form>
+{% endblock %}

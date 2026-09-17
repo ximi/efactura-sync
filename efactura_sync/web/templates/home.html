@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row" style="justify-content: space-between; margin-bottom: 16px;">
+  <h1 style="margin:0">{{ t('nav_home') }}</h1>
+  <form method="post" action="{{ url_for('start_sync') }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="primary big" type="submit" {{ 'disabled' if running }}>
+      {{ t('sync_running') if running else t('sync') }}
+    </button>
+  </form>
+</div>
+
+<div class="cards">
+  <div class="card"><div class="k">{{ t('last_sync') }}</div>
+    <div class="v small">{{ report.last_run or t('never') }}</div></div>
+  <div class="card"><div class="k">{{ t('total') }}</div><div class="v">{{ report.total }}</div></div>
+  <div class="card"><div class="k">{{ t('this_month') }}</div><div class="v">{{ report.this_month }}</div></div>
+  <div class="card"><div class="k">{{ t('pdf_failed') }}</div>
+    <div class="v {{ 'warn' if report.pdf_failed }}">{{ report.pdf_failed }}</div></div>
+  <div class="card"><div class="k">{{ t('environment') }}</div>
+    <div class="v small">{{ t('environment_' + report.environment) }} · CIF {{ report.cif }}</div></div>
+</div>
+
+<h2>{{ t('log') }}</h2>
+<div class="log" id="log">{% for e in events %}{{ e | tojson }}
+{% endfor %}</div>
+
+{% if report.recent %}
+<h2>{{ t('recent') }}</h2>
+<table>
+  <thead><tr><th>{{ t('col_date') }}</th><th>{{ t('col_invoice') }}</th><th>{{ t('col_supplier') }}</th><th></th></tr></thead>
+  <tbody>
+  {% for inv in report.recent %}
+    <tr>
+      <td>{{ inv.issue_date or '—' }}</td>
+      <td>{{ inv.invoice_id }}</td>
+      <td>{{ inv.supplier_name }}</td>
+      <td>{% if not inv.pdf_ok %}<span class="muted">{{ t('xml_only') }}</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<script>
+(function () {
+  const S = {{ {
+    'ev_started': t('ev_started'), 'ev_listed': t('ev_listed'), 'ev_done': t('ev_done'),
+    'ev_dup': t('ev_dup'), 'ev_pdf_failed': t('ev_pdf_failed'), 'ev_error': t('ev_error'),
+    'ev_error_run': t('ev_error_run'), 'ev_notice': t('ev_notice'), 'ev_finished': t('ev_finished')
+  } | tojson }};
+  const fmt = (s, v) => s.replace(/\{(\w+)\}/g, (_, k) => (v[k] ?? ''));
+  function line(e) {
+    switch (e.type) {
+      case 'SyncStarted':   return fmt(S.ev_started, {days: e.lookback_days, env: e.environment, cif: e.cif});
+      case 'MessagesListed':return fmt(S.ev_listed, {count: e.count});
+      case 'Notice':        return fmt(S.ev_notice, e);
+      case 'Duplicate':     return fmt(S.ev_dup, {id: e.download_id});
+      case 'PdfFailed':     return '! ' + fmt(S.ev_pdf_failed, {invoice: e.invoice_id, message: e.message});
+      case 'InvoiceDone':   return (e.pdf_ok ? '✓ ' : '· ') + fmt(S.ev_done, {invoice: e.invoice_id, supplier: e.supplier_name, date: e.issue_date || ''});
+      case 'SyncError':     return '✗ ' + (e.download_id
+                              ? fmt(S.ev_error, {id: e.download_id, message: e.message})
+                              : fmt(S.ev_error_run, {message: e.message}));
+      case 'SyncFinished':  return fmt(S.ev_finished, {new: e.new, dup: e.duplicates, pdf: e.pdf_failed, err: e.errors});
+      default:              return JSON.stringify(e);
+    }
+  }
+  const log = document.getElementById('log');
+  // Server-rendered raw events → readable lines.
+  const raw = log.textContent.trim().split('\n').filter(Boolean);
+  log.textContent = raw.map(l => { try { return line(JSON.parse(l)); } catch (_) { return l; } }).join('\n');
+  {% if running %}
+  const es = new EventSource('{{ url_for('sync_events') }}');
+  log.textContent = '';
+  es.onmessage = ev => { log.textContent += line(JSON.parse(ev.data)) + '\n'; log.scrollTop = log.scrollHeight; };
+  es.addEventListener('done', () => { es.close(); setTimeout(() => location.reload(), 600); });
+  {% endif %}
+})();
+</script>
+{% endblock %}

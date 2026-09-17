@@ -1,2 +1,3 @@
 requests>=2.31
 lxml>=5.0
+flask>=3.0

@@ -69,6 +69,11 @@ def cmd_status(cfg: dict) -> None:
                   f"{inv.supplier_name}{flag}")
 
 
+def cmd_ui(cfg: dict, open_browser: bool = True) -> None:
+    from . import web  # Flask is only imported when the UI is actually requested
+    web.run_ui(cfg, open_browser=open_browser)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="anaf_invoices.py",
@@ -82,6 +87,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("auth", help="One-time OAuth login (manual code paste).")
     sub.add_parser("sync", help="Download new received invoices and convert to PDF.")
     sub.add_parser("status", help="Show download statistics.")
+    ui = sub.add_parser("ui", help="Open the local web interface in your browser.")
+    ui.add_argument("--no-browser", action="store_true",
+                    help="Start the server without opening a browser window.")
     return parser
 
 
@@ -101,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
             cmd_sync(cfg)
         elif args.command == "status":
             cmd_status(cfg)
+        elif args.command == "ui":
+            cmd_ui(cfg, open_browser=not args.no_browser)
     except core.ConfigError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}{{ t('nav_invoices') }} · {{ t('app') }}{% endblock %}
+{% block content %}
+<div class="row" style="justify-content: space-between; margin-bottom: 16px;">
+  <h1 style="margin:0">{{ t('nav_invoices') }}</h1>
+  <form method="post" action="{{ url_for('open_folder') }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit">{{ t('open_folder') }}</button>
+  </form>
+</div>
+
+<form method="get" class="row" style="margin-bottom: 16px;">
+  <label>{{ t('filter_month') }}
+    <select name="luna">
+      <option value="">{{ t('all') }}</option>
+      {% for m in months %}<option value="{{ m }}" {{ 'selected' if m == month }}>{{ m }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>{{ t('filter_supplier') }} <input name="furnizor" value="{{ supplier }}"></label>
+  <button type="submit">{{ t('filter') }}</button>
+</form>
+
+{% if rows %}
+<table>
+  <thead><tr>
+    <th>{{ t('col_date') }}</th><th>{{ t('col_invoice') }}</th><th>{{ t('col_supplier') }}</th>
+    <th>{{ t('col_type') }}</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>{{ r.issue_date or '—' }}</td>
+      <td>{{ r.invoice_id }}</td>
+      <td>{{ r.supplier_name }} <span class="muted">{{ r.supplier_cif }}</span></td>
+      <td>{{ t('credit_note') if r.doc_type == 'credit_note' else t('invoice') }}</td>
+      <td>{% if r.pdf_ok and r.pdf_path %}<a class="btn" href="{{ url_for('pdf', download_id=r.download_id) }}" target="_blank">{{ t('open_pdf') }}</a>
+          {% else %}<span class="muted">{{ t('xml_only') }}</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">{{ t('no_invoices') }}</p>
+{% endif %}
+
+<p class="muted" style="margin-top: 16px;">{{ t('csv_note') }}<br><code>{{ base_dir }}</code></p>
+{% endblock %}

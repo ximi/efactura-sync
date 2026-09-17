@@ -7,11 +7,9 @@ split into begin/complete, status as data, and the anaf_invoices.py shim.
 """
 
 import csv
-import io
 import os
 import re
 import tempfile
-import zipfile
 from pathlib import Path
 
 os.environ.setdefault("ANAF_CONFIG_DIR", tempfile.mkdtemp(prefix="anaf_ev_"))
@@ -19,54 +17,9 @@ os.environ.setdefault("ANAF_CONFIG_DIR", tempfile.mkdtemp(prefix="anaf_ev_"))
 import pytest  # noqa: E402
 
 from efactura_sync import core  # noqa: E402
-from conftest import SAMPLE_INVOICE, SAMPLE_CREDIT_NOTE  # noqa: E402
-
-
-# --------------------------------------------------------------------------- #
-# Fake ANAF
-# --------------------------------------------------------------------------- #
-
-def make_zip(xml: bytes, name: str = "4017.xml") -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr(f"semnatura_{name}", b"<signature/>")
-        zf.writestr(name, xml)
-    return buf.getvalue()
-
-
-def msg(download_id: str, tip: str = "FACTURA") -> dict:
-    return {"id": download_id, "tip": tip, "data_creare": "2026-03-14T10:00:00",
-            "cif_emitent": "87654321", "id_solicitare": f"req-{download_id}"}
-
-
-class FakeResp:
-    def __init__(self, json_data=None, content=b"", status_code=200):
-        self._json, self.content, self.status_code = json_data, content, status_code
-
-    def json(self):
-        return self._json
-
-
-class FakeAnaf:
-    def __init__(self, messages, zips, paginated_ok=True, fail_download=()):
-        self.messages, self.zips = messages, zips
-        self.paginated_ok, self.fail_download = paginated_ok, set(fail_download)
-        self.calls = []
-
-    def api_get(self, cfg, path, params):
-        self.calls.append((path, dict(params)))
-        if path == "listaMesajePaginatieFactura":
-            if not self.paginated_ok:
-                raise RuntimeError("HTTP 500 from ANAF")
-            return FakeResp({"mesaje": self.messages, "numar_total_pagini": 1})
-        if path == "listaMesajeFactura":
-            return FakeResp({"mesaje": self.messages})
-        if path == "descarcare":
-            did = params["id"]
-            if did in self.fail_download:
-                raise RuntimeError("connection reset")
-            return FakeResp(content=self.zips[did])
-        raise AssertionError(f"unexpected API path {path}")
+from conftest import (  # noqa: E402
+    SAMPLE_INVOICE, FakeAnaf, FakeResp, make_zip, msg, two_invoices,
+)
 
 
 @pytest.fixture
@@ -86,13 +39,6 @@ def env(tmp_path, monkeypatch):
 
 def of(events, cls):
     return [e for e in events if isinstance(e, cls)]
-
-
-def two_invoices():
-    return FakeAnaf(
-        messages=[msg("1001"), msg("1002")],
-        zips={"1001": make_zip(SAMPLE_INVOICE), "1002": make_zip(SAMPLE_CREDIT_NOTE)},
-    )
 
 
 # --------------------------------------------------------------------------- #

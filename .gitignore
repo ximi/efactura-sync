@@ -13,6 +13,7 @@ __pycache__/
 
 # Local tooling / OS
 .claude/settings.local.json
+.claude/launch.json
 .DS_Store
 
 # Downloaded invoices, if base_dir is ever pointed inside the repo

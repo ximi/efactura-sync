@@ -52,6 +52,10 @@ Dates are when the decision was made.
 - Missing config → wizard: (1) what you need + ANAF registration steps with links,
   (2) credentials, CIF, environment, folder, (3) authentication. Friendly validation.
 - One error-mapping helper: raw HTTP statuses / English internals never reach the UI.
+  Seen live in WP2 (2026-09-17): a sync with no tokens logs "Not authenticated. Run
+  `auth` first." and "Paginated listing unavailable (…); using legacy endpoint." —
+  both English internals. Map `ConfigError`/`RuntimeError` classes to ro/en copy with
+  the next action ("Autentifică-te în Setări").
 - Windows-safe file opening (`os.startfile`) and no-op `chmod`.
 
 ## WP4 — Packaging + CI (1 day)
