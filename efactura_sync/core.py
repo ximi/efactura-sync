@@ -16,10 +16,12 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import sqlite3
 import stat
+import sys
 import time
 import zipfile
 from dataclasses import dataclass, field
@@ -46,6 +48,39 @@ DB_PATH = CONFIG_DIR / "invoices.db"
 DEFAULT_ENVIRONMENT = "prod"
 DEFAULT_BASE_DIR = Path.home() / "Documents" / "Facturi e-Factura"
 DEFAULT_REDIRECT_URI = "https://localhost/callback"
+
+# Process-wide environment override (`--env` for commands that load config
+# lazily, like `ui`). None means "whatever config.json says".
+ENV_OVERRIDE: str | None = None
+
+SCHEMA_VERSION = 1
+_SCHEMA_READY: set[str] = set()   # DB paths whose schema was ensured this process
+
+log = logging.getLogger(__name__)
+
+
+def set_config_dir(path) -> None:
+    """Point every runtime file at one directory (config, tokens, DB together)."""
+    global CONFIG_DIR, CONFIG_PATH, TOKENS_PATH, DB_PATH
+    CONFIG_DIR = Path(path)
+    CONFIG_PATH = CONFIG_DIR / "config.json"
+    TOKENS_PATH = CONFIG_DIR / "tokens.json"
+    DB_PATH = CONFIG_DIR / "invoices.db"
+
+
+def setup_frozen_logging() -> None:
+    """A windowed bundle has no console: log to a file and never lose a crash."""
+    if not getattr(sys, "frozen", False):
+        return
+    ensure_config_dir()
+    logging.basicConfig(filename=str(CONFIG_DIR / "ui.log"), level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+    sys.excepthook = lambda et, ev, tb: logging.getLogger("efactura_sync").critical(
+        "Unhandled error", exc_info=(et, ev, tb))
 
 AUTH_URL = "https://logincert.anaf.ro/anaf-oauth2/v1/authorize"
 TOKEN_URL = "https://logincert.anaf.ro/anaf-oauth2/v1/token"
@@ -93,6 +128,9 @@ def error_code(exc: BaseException) -> str:
         return "network"
     if isinstance(exc, requests.exceptions.HTTPError):
         return "anaf_http"
+    if isinstance(exc, PermissionError):
+        name = str(getattr(exc, "filename", "") or "")
+        return "csv_locked" if name.endswith("invoices.csv") else "folder_unwritable"
     if isinstance(exc, zipfile.BadZipFile):
         return "bad_download"
     if isinstance(exc, RuntimeError):
@@ -205,19 +243,23 @@ def load_config(env_override: str | None = None) -> dict:
             os.chmod(CONFIG_PATH, 0o600)
     except OSError:
         pass
-    with CONFIG_PATH.open(encoding="utf-8") as fh:
-        cfg = json.load(fh)
+    try:
+        with CONFIG_PATH.open(encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    except ValueError as exc:
+        raise ConfigError(f"config.json is not valid JSON: {exc}", code="bad_config") from exc
 
     # Environment-variable overrides.
     cfg["client_id"] = os.environ.get("ANAF_CLIENT_ID", cfg.get("client_id"))
     cfg["client_secret"] = os.environ.get("ANAF_CLIENT_SECRET", cfg.get("client_secret"))
     cfg["cif"] = str(os.environ.get("ANAF_CIF", cfg.get("cif", ""))).strip()
-    if env_override:
-        cfg["environment"] = env_override
+    if env_override or ENV_OVERRIDE:
+        cfg["environment"] = env_override or ENV_OVERRIDE
 
     cfg.setdefault("environment", DEFAULT_ENVIRONMENT)
     cfg.setdefault("redirect_uri", DEFAULT_REDIRECT_URI)
-    cfg.setdefault("base_dir", str(DEFAULT_BASE_DIR))
+    if not cfg.get("base_dir"):                  # absent OR empty: both mean "default"
+        cfg["base_dir"] = str(DEFAULT_BASE_DIR)
 
     missing = [k for k in ("client_id", "client_secret", "cif") if not cfg.get(k)]
     if missing:
@@ -241,11 +283,27 @@ def normalize_cif(value: str) -> str:
 
 
 def read_config_raw() -> dict:
-    """The config file as written, without validation. {} if absent (WP2: settings form)."""
+    """The config file as written, without validation. {} if absent or unreadable
+    (WP2: settings form) — see config_problem() for why it may be empty."""
     if not CONFIG_PATH.exists():
         return {}
-    with CONFIG_PATH.open(encoding="utf-8") as fh:
-        return json.load(fh)
+    try:
+        with CONFIG_PATH.open(encoding="utf-8") as fh:
+            return json.load(fh)
+    except ValueError:
+        return {}
+
+
+def config_problem() -> str | None:
+    """'bad_config' when config.json exists but cannot be parsed, else None."""
+    if not CONFIG_PATH.exists():
+        return None
+    try:
+        with CONFIG_PATH.open(encoding="utf-8") as fh:
+            json.load(fh)
+    except ValueError:
+        return "bad_config"
+    return None
 
 
 def save_config(raw: dict) -> None:
@@ -261,8 +319,11 @@ def save_config(raw: dict) -> None:
 def load_tokens() -> dict | None:
     if not TOKENS_PATH.exists():
         return None
-    with TOKENS_PATH.open(encoding="utf-8") as fh:
-        return json.load(fh)
+    try:
+        with TOKENS_PATH.open(encoding="utf-8") as fh:
+            return json.load(fh)
+    except ValueError:
+        return None
 
 
 def save_tokens(tokens: dict) -> None:
@@ -475,8 +536,11 @@ def api_get(cfg: dict, path: str, params: dict) -> requests.Response:
     base = REST_BASE[cfg["environment"]]
     url = f"{base}/{path}"
     refreshed = False
+    force = False
+    resp = None
     for attempt in range(MAX_RETRIES):
-        token = get_access_token(cfg, force_refresh=refreshed)
+        token = get_access_token(cfg, force_refresh=force)
+        force = False                       # a refresh is a one-off, not per attempt
         resp = requests.get(
             url,
             params=params,
@@ -484,7 +548,7 @@ def api_get(cfg: dict, path: str, params: dict) -> requests.Response:
             timeout=HTTP_TIMEOUT,
         )
         if resp.status_code == 401 and not refreshed:
-            refreshed = True  # token may be stale; refresh once and retry
+            refreshed = force = True        # token may be stale; refresh once and retry
             continue
         if resp.status_code in (429, 500, 502, 503, 504):
             wait = min(2 ** attempt, 30)
@@ -493,8 +557,10 @@ def api_get(cfg: dict, path: str, params: dict) -> requests.Response:
         resp.raise_for_status()
         time.sleep(POLITE_SLEEP)
         return resp
-    raise RuntimeError(f"Request to {url} failed after {MAX_RETRIES} attempts "
-                       f"(last status {resp.status_code}).")
+    # Exhausted retries on 429/5xx: an ANAF-side problem, classified as such.
+    raise requests.exceptions.HTTPError(
+        f"Request to {url} failed after {MAX_RETRIES} attempts "
+        f"(last status {resp.status_code}).", response=resp)
 
 
 def xml_to_pdf(xml_bytes: bytes, standard: str) -> bytes:
@@ -528,8 +594,10 @@ def xml_to_pdf(xml_bytes: bytes, standard: str) -> bytes:
 
 def connect_db() -> sqlite3.Connection:
     ensure_config_dir()
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
+    if str(DB_PATH) in _SCHEMA_READY:
+        return conn
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS invoices (
@@ -563,15 +631,36 @@ def connect_db() -> sqlite3.Connection:
             key   TEXT PRIMARY KEY,
             value TEXT
         );
+
+        -- Messages we decided not to keep (content duplicates): remembered so
+        -- they are never downloaded again (review fix 2026-09-17).
+        CREATE TABLE IF NOT EXISTS skipped (
+            download_id TEXT PRIMARY KEY,
+            reason      TEXT,
+            seen_at     TEXT
+        );
         """
     )
+    conn.execute(
+        "INSERT INTO sync_state (key, value) VALUES ('schema_version', ?) "
+        "ON CONFLICT(key) DO NOTHING", (str(SCHEMA_VERSION),))
     conn.commit()
+    _SCHEMA_READY.add(str(DB_PATH))
     return conn
 
 
 def db_has_download(conn: sqlite3.Connection, download_id: str) -> bool:
-    cur = conn.execute("SELECT 1 FROM invoices WHERE download_id = ?", (download_id,))
+    """Already filed, or already examined and skipped — either way, don't fetch again."""
+    cur = conn.execute(
+        "SELECT 1 FROM invoices WHERE download_id = ? "
+        "UNION ALL SELECT 1 FROM skipped WHERE download_id = ?", (download_id, download_id))
     return cur.fetchone() is not None
+
+
+def mark_skipped(conn: sqlite3.Connection, download_id: str, reason: str) -> None:
+    conn.execute("INSERT OR IGNORE INTO skipped (download_id, reason, seen_at) VALUES (?, ?, ?)",
+                 (download_id, reason, datetime.now().isoformat(timespec="seconds")))
+    conn.commit()
 
 
 def db_has_hash(conn: sqlite3.Connection, xml_sha256: str) -> bool:
@@ -737,13 +826,37 @@ def select_invoice_xml(zip_bytes: bytes) -> tuple[str, bytes]:
         return chosen, zf.read(chosen)
 
 
+def parse_message_date(value: str | None) -> datetime | None:
+    """ANAF sends `data_creare` as YYYYMMDDHHMM; accept ISO too. None if unparseable.
+    (Review fix 2026-09-17: the old code assumed ISO and silently used today.)"""
+    value = (value or "").strip()
+    if not value:
+        return None
+    for fmt in ("%Y%m%d%H%M", "%Y%m%d"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            pass
+    try:
+        return datetime.fromisoformat(value[:19])
+    except ValueError:
+        return None
+
+
+def resolve_filing_date(meta: dict, message_date: str) -> tuple[datetime, bool]:
+    """Issue date, else ANAF message date, else today — the flag says 'guessed'."""
+    issue = parse_message_date(meta.get("issue_date"))
+    if issue:
+        return issue, False
+    received = parse_message_date(message_date)
+    if received:
+        return received, False
+    return datetime.now(), True
+
+
 def build_target_paths(base_dir: Path, meta: dict, message_date: str) -> tuple[Path, str]:
     """Return (directory, basename) for filing this invoice."""
-    date_str = meta.get("issue_date") or (message_date[:10] if message_date else "")
-    try:
-        dt = datetime.strptime(date_str, "%Y-%m-%d")
-    except (ValueError, TypeError):
-        dt = datetime.now()
+    dt, _ = resolve_filing_date(meta, message_date)
     directory = base_dir / f"{dt:%Y}" / f"{dt:%m}"
     basename = "_".join([
         sanitize(meta["invoice_id"], 40),
@@ -839,7 +952,9 @@ def sync(cfg: dict) -> Iterator[SyncEvent]:
 
         try:
             messages = _list_paginated(cfg)
-        except Exception as exc:  # noqa: BLE001 — fall back to the legacy endpoint
+        except (requests.exceptions.HTTPError, RuntimeError) as exc:
+            # Only an endpoint-level failure justifies the legacy fallback; an auth or
+            # network problem would fail there too and only add a misleading notice.
             yield Notice(f"Paginated listing unavailable ({exc}); using legacy endpoint.",
                          code="legacy_listing")
             try:
@@ -848,6 +963,10 @@ def sync(cfg: dict) -> Iterator[SyncEvent]:
                 yield SyncError("", str(exc2), error_code(exc2))
                 yield SyncFinished(0, 0, 0, 1, str(base_dir))
                 return
+        except Exception as exc:  # noqa: BLE001 — auth/network: report, no last_run
+            yield SyncError("", str(exc), error_code(exc))
+            yield SyncFinished(0, 0, 0, 1, str(base_dir))
+            return
         yield MessagesListed(len(messages))
 
         new_count = dup_count = pdf_failed = error_count = 0
@@ -877,13 +996,23 @@ def sync(cfg: dict) -> Iterator[SyncEvent]:
                 if db_has_hash(conn, content_hash):
                     reason = "duplicate content (xml hash)"
                     log_duplicate(conn, download_id, "", reason)
+                    mark_skipped(conn, download_id, reason)
                     dup_count += 1
                     yield Duplicate(download_id, reason)
                     continue
 
                 meta = parse_invoice_xml(xml_bytes)
+                _, date_guessed = resolve_filing_date(meta, message_date)
+                if date_guessed:
+                    yield Notice(f"No date for {meta['invoice_id']}; filed under today.",
+                                 code="date_unknown")
                 directory, basename = build_target_paths(base_dir, meta, message_date)
                 directory.mkdir(parents=True, exist_ok=True)
+
+                # Two different invoices can share id+supplier+date (missing IDs become
+                # UNKNOWN; long ones truncate). Never overwrite: disambiguate by ANAF id.
+                if any((directory / f"{basename}{ext}").exists() for ext in (".xml", ".zip", ".pdf")):
+                    basename = f"{basename}_{sanitize(download_id, 20)}"
 
                 xml_path = directory / f"{basename}.xml"
                 zip_path = directory / f"{basename}.zip"
@@ -915,7 +1044,8 @@ def sync(cfg: dict) -> Iterator[SyncEvent]:
                      str(pdf_path) if pdf_ok else "", str(xml_path), str(zip_path),
                      int(pdf_ok), note, now_iso),
                 )
-                conn.commit()
+                # CSV first, commit second: if the accountant has invoices.csv open in
+                # Excel, the invoice must not be marked done and then never exported.
                 append_csv(base_dir, {
                     "invoice_id": meta["invoice_id"],
                     "supplier_name": meta["supplier_name"],
@@ -931,12 +1061,14 @@ def sync(cfg: dict) -> Iterator[SyncEvent]:
                     "pdf_ok": int(pdf_ok),
                     "downloaded_at": now_iso,
                 })
+                conn.commit()
                 new_count += 1
                 yield InvoiceDone(download_id, meta["invoice_id"], meta["supplier_name"],
                                   meta["issue_date"], pdf_ok,
                                   str(pdf_path) if pdf_ok else "", str(xml_path))
 
             except Exception as exc:  # noqa: BLE001 — record and continue with next msg
+                conn.rollback()                 # nothing half-done survives for this id
                 error_count += 1
                 yield SyncError(download_id, str(exc), error_code(exc))
 

@@ -18,7 +18,7 @@ from efactura_sync import __main__ as entry, __version__, cli, core, web  # noqa
 
 def test_main_module_defaults_to_ui(monkeypatch):
     seen = []
-    monkeypatch.setattr(cli, "cmd_ui", lambda cfg, **kw: seen.append("ui"))
+    monkeypatch.setattr(cli, "cmd_ui", lambda **kw: seen.append("ui"))
     assert entry.run([]) == 0
     assert seen == ["ui"]
 
@@ -47,7 +47,7 @@ def test_run_ui_reuses_running_instance(monkeypatch):
         raise AssertionError("a second server must not be started")
 
     monkeypatch.setattr(web, "_free_port", must_not_start)
-    web.run_ui(None, port=8765)
+    web.run_ui(port=8765)
     assert opened == ["http://127.0.0.1:8765/"]
 
 

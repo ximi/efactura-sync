@@ -61,11 +61,19 @@ def msg(download_id: str, tip: str = "FACTURA") -> dict:
 
 
 class FakeResp:
-    def __init__(self, json_data=None, content=b"", status_code=200, text=""):
+    def __init__(self, json_data=None, content=b"", status_code=200, text="", headers=None):
         self._json, self.content, self.status_code, self.text = json_data, content, status_code, text
+        self.headers = headers or {}
 
     def json(self):
+        if self._json is None:
+            raise ValueError("no JSON body")
         return self._json
+
+    def raise_for_status(self):
+        import requests
+        if self.status_code >= 400:
+            raise requests.exceptions.HTTPError(f"{self.status_code} error", response=self)
 
 
 class FakeAnaf:
@@ -95,3 +103,98 @@ def two_invoices() -> FakeAnaf:
         messages=[msg("1001"), msg("1002")],
         zips={"1001": make_zip(SAMPLE_INVOICE), "1002": make_zip(SAMPLE_CREDIT_NOTE)},
     )
+
+
+# --------------------------------------------------------------------------- #
+# Shared fixtures (imports of the package happen lazily, inside the fixtures)
+# --------------------------------------------------------------------------- #
+
+import json as _json
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _no_anaf_env(monkeypatch):
+    """The README documents ANAF_* overrides; a developer with them exported must
+    not get a different test result (review finding, 2026-09-17)."""
+    for key in ("ANAF_CLIENT_ID", "ANAF_CLIENT_SECRET", "ANAF_CIF"):
+        monkeypatch.delenv(key, raising=False)
+
+
+@_pytest.fixture
+def env(tmp_path, monkeypatch):
+    """Isolated DB + base_dir; returns a runner that yields the event list."""
+    from efactura_sync import core
+    monkeypatch.setattr(core, "DB_PATH", tmp_path / "invoices.db")
+    cfg = {"environment": "test", "cif": "1", "base_dir": str(tmp_path / "inv")}
+
+    def run(fake, pdf=lambda xml, standard: b"%PDF-fake"):
+        monkeypatch.setattr(core, "api_get", fake.api_get)
+        monkeypatch.setattr(core, "xml_to_pdf", pdf)
+        return list(core.sync(cfg))
+
+    run.cfg, run.base = cfg, tmp_path / "inv"
+    return run
+
+
+BASE_CFG = {"client_id": "cid", "client_secret": "topsecret-value", "cif": "50000000",
+            "environment": "test", "redirect_uri": "https://localhost/callback"}
+
+
+@_pytest.fixture
+def harness(tmp_path, monkeypatch):
+    """Isolated config/tokens/DB, a fake ANAF behind core.sync, injectable side effects."""
+    from efactura_sync import core
+    from efactura_sync.web import create_app
+    monkeypatch.setattr(core, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(core, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr(core, "TOKENS_PATH", tmp_path / "tokens.json")
+    monkeypatch.setattr(core, "DB_PATH", tmp_path / "invoices.db")
+    fake = two_invoices()
+    monkeypatch.setattr(core, "api_get", fake.api_get)
+    monkeypatch.setattr(core, "xml_to_pdf", lambda xml, standard: b"%PDF-fake")
+
+    calls = {"opened": [], "shutdown": 0, "pick_result": None, "pick_initial": None}
+
+    def pick(initial):
+        calls["pick_initial"] = str(initial)
+        return calls["pick_result"]
+
+    app = create_app(
+        open_path=lambda p: calls["opened"].append(str(p)),
+        shutdown=lambda: calls.__setitem__("shutdown", calls["shutdown"] + 1),
+        pick_folder=pick,
+    )
+    app.config["TESTING"] = True
+
+    class H:
+        pass
+
+    h = H()
+    h.app, h.client, h.calls, h.fake, h.tmp = app, app.test_client(), calls, fake, tmp_path
+    h.csrf = app.config["CSRF_TOKEN"]
+
+    def write_cfg(**overrides):
+        cfg = {**BASE_CFG, "base_dir": str(tmp_path / "inv"), **overrides}
+        (tmp_path / "config.json").write_text(_json.dumps(cfg))
+        return cfg
+
+    def post(path, **form):
+        return h.client.post(path, data={"csrf": h.csrf, **form})
+
+    def synced():
+        """Run one sync to completion through the UI; returns the SSE event list."""
+        assert post("/sync").status_code == 303
+        assert h.app.runner.wait(5)
+        raw = h.client.get("/sync/events").get_data(as_text=True)
+        events = []
+        for block in raw.split("\n\n"):
+            lines = block.strip().splitlines()
+            if not lines or any(l.startswith("event: done") for l in lines):
+                continue
+            data = "".join(l[6:] for l in lines if l.startswith("data: "))
+            events.append(_json.loads(data))
+        return events
+
+    h.write_cfg, h.post, h.synced = write_cfg, post, synced
+    return h

@@ -101,7 +101,29 @@ Dates are when the decision was made.
    certificate issue). A follow-up fix after the first real sync is likely.
 6. **Two languages** means every string is maintained twice (chosen knowingly).
 
+## Review 2026-09-17 (4 passes: security, code quality/tests, UX/copy, ops)
+
+- Batch A (correctness) done: ANAF `data_creare` parsed as YYYYMMDDHHMM; filename
+  collisions disambiguated by download id; content duplicates remembered (no
+  re-download); corrupt config/tokens degrade gracefully; base_dir validated;
+  watchdog grace after a run + streams count as activity; refresh-once after 401;
+  exhausted retries → `anaf_http`; legacy fallback only on HTTP errors; CSV written
+  before commit (+ `csv_locked` message); instance probe across the port range;
+  startup logged; per-run SSE buffers; non-ASCII csrf → 403; IPv6 host; schema once
+  per process + `schema_version`; CLI/web render every event; `--env`/`--config`
+  coherent; open-folder creates the folder; quit refused mid-sync; frozen logging
+  for all commands; quiet folder pickers.
+- Batch B (security hardening) and C (UX) pending — see the review list.
+
 ## Deferred (from the 2026-09-17 security review)
+
+- Lockfile / hash-pinned dependencies for reproducible release builds.
+- Windows: `Documents` may be OneDrive-redirected (query the known folder); the
+  `0600` model is a no-op on NTFS (document; consider DPAPI for tokens).
+- A failed matrix leg blocks the whole release; recover with "re-run failed jobs".
+- CSRF token is readable by any same-user local process — accepted: such a
+  process can read `config.json` directly anyway.
+- `schema_version` is recorded; real migrations arrive with the first schema change.
 
 - Token storage in macOS Keychain / Windows Credential Manager (currently `0600`
   JSON, same model as `aws`/`gcloud`).

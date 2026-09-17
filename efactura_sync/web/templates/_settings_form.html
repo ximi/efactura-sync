@@ -6,6 +6,7 @@
   <input type="hidden" name="csrf" value="{{ csrf }}">
   {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
 
+  {% if config_problem %}<div class="flash warn-border">{{ t('config_corrupt') }}</div>{% endif %}
   {% if errors %}<div class="flash warn-border">{{ t('val_fix') }}</div>{% endif %}
 
   <label for="client_id">{{ t('client_id') }}</label>
@@ -22,9 +23,10 @@
 
   <label for="base_dir">{{ t('base_dir') }} <span class="hint">— {{ t('folder_hint') }}</span></label>
   <div class="row" style="flex-wrap: nowrap;">
-    <input id="base_dir" name="base_dir" value="{{ raw.get('base_dir', '') }}" autocomplete="off" style="flex: 1;">
+    <input id="base_dir" name="base_dir" value="{{ raw.get('base_dir', '') }}" autocomplete="off" style="flex: 1;" {{ 'aria-invalid=true' if errors.base_dir }}>
     <button type="button" id="pick-folder">{{ t('choose') }}</button>
   </div>
+  {% if errors.base_dir %}<div class="field-error">{{ errors.base_dir }}</div>{% endif %}
 
   <details style="margin-top: 16px;" {{ 'open' if errors.environment }}>
     <summary class="muted">{{ t('adv_title') }}</summary>

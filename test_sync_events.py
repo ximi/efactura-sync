@@ -22,21 +22,6 @@ from conftest import (  # noqa: E402
 )
 
 
-@pytest.fixture
-def env(tmp_path, monkeypatch):
-    """Isolated DB + base_dir; returns a runner that yields the event list."""
-    monkeypatch.setattr(core, "DB_PATH", tmp_path / "invoices.db")
-    cfg = {"environment": "test", "cif": "1", "base_dir": str(tmp_path / "inv")}
-
-    def run(fake, pdf=lambda xml, standard: b"%PDF-fake"):
-        monkeypatch.setattr(core, "api_get", fake.api_get)
-        monkeypatch.setattr(core, "xml_to_pdf", pdf)
-        return list(core.sync(cfg))
-
-    run.cfg, run.base = cfg, tmp_path / "inv"
-    return run
-
-
 def of(events, cls):
     return [e for e in events if isinstance(e, cls)]
 
@@ -151,14 +136,15 @@ def test_error_code_classification():
 
 def test_unauthenticated_listing_is_reported_not_raised(env):
     """Missing tokens must end as SyncError + SyncFinished(errors=1), never a traceback,
-    and must not record a last_run (nothing was synced)."""
+    must not record a last_run, and must NOT be preceded by the misleading
+    'legacy listing' notice (review finding: auth/network failures are not
+    'endpoint unavailable')."""
     class Raising:
         def api_get(self, cfg, path, params):
             raise core.ConfigError("Not authenticated. Run `auth` first.", code="not_authenticated")
 
     events = env(Raising())
-    notice = of(events, core.Notice)[0]
-    assert notice.code == "legacy_listing"
+    assert not of(events, core.Notice)
     err = of(events, core.SyncError)[0]
     assert err.code == "not_authenticated" and err.download_id == ""
     assert isinstance(events[-1], core.SyncFinished) and events[-1].errors == 1

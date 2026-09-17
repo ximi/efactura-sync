@@ -10,10 +10,12 @@ import sys
 # Absolute import on purpose: PyInstaller executes this file as a top-level
 # script (no parent package), where a relative import fails at launch.
 # Found by the bundle smoke test, 2026-09-17.
+from efactura_sync import core
 from efactura_sync.cli import main
 
 
 def run(argv: list[str] | None = None) -> int:
+    core.setup_frozen_logging()             # every command, not just `ui`
     argv = list(sys.argv[1:] if argv is None else argv)
     return main(argv or ["ui"])
 

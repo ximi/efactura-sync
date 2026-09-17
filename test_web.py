@@ -23,71 +23,6 @@ from efactura_sync import core  # noqa: E402
 from efactura_sync.web import create_app  # noqa: E402
 from conftest import FakeResp, two_invoices  # noqa: E402
 
-BASE_CFG = {"client_id": "cid", "client_secret": "topsecret-value", "cif": "50000000",
-            "environment": "test", "redirect_uri": "https://localhost/callback"}
-
-
-@pytest.fixture
-def harness(tmp_path, monkeypatch):
-    """Isolated config/tokens/DB, a fake ANAF behind core.sync, injectable side effects."""
-    monkeypatch.setattr(core, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(core, "CONFIG_PATH", tmp_path / "config.json")
-    monkeypatch.setattr(core, "TOKENS_PATH", tmp_path / "tokens.json")
-    monkeypatch.setattr(core, "DB_PATH", tmp_path / "invoices.db")
-    fake = two_invoices()
-    monkeypatch.setattr(core, "api_get", fake.api_get)
-    monkeypatch.setattr(core, "xml_to_pdf", lambda xml, standard: b"%PDF-fake")
-
-    calls = {"opened": [], "shutdown": 0, "pick_result": None, "pick_initial": None}
-
-    def pick(initial):
-        calls["pick_initial"] = str(initial)
-        return calls["pick_result"]
-
-    app = create_app(
-        open_path=lambda p: calls["opened"].append(str(p)),
-        shutdown=lambda: calls.__setitem__("shutdown", calls["shutdown"] + 1),
-        pick_folder=pick,
-    )
-    app.config["TESTING"] = True
-
-    class H:
-        pass
-
-    h = H()
-    h.app, h.client, h.calls, h.fake, h.tmp = app, app.test_client(), calls, fake, tmp_path
-    h.csrf = app.config["CSRF_TOKEN"]
-
-    def write_cfg(**overrides):
-        cfg = {**BASE_CFG, "base_dir": str(tmp_path / "inv"), **overrides}
-        (tmp_path / "config.json").write_text(json.dumps(cfg))
-        return cfg
-
-    def post(path, **form):
-        return h.client.post(path, data={"csrf": h.csrf, **form})
-
-    def synced():
-        """Run one sync to completion through the UI; returns the SSE event list.
-
-        Parses SSE blocks (blank-line separated) and drops the trailing
-        `event: done` sentinel the page uses to close its EventSource.
-        """
-        assert post("/sync").status_code == 303
-        assert h.app.runner.wait(5)
-        raw = h.client.get("/sync/events").get_data(as_text=True)
-        events = []
-        for block in raw.split("\n\n"):
-            lines = block.strip().splitlines()
-            if not lines or any(l.startswith("event: done") for l in lines):
-                continue
-            data = "".join(l[6:] for l in lines if l.startswith("data: "))
-            events.append(json.loads(data))
-        return events
-
-    h.write_cfg, h.post, h.synced = write_cfg, post, synced
-    return h
-
-
 # --------------------------------------------------------------------------- #
 # Pages
 # --------------------------------------------------------------------------- #
@@ -129,7 +64,7 @@ def test_wizard_step3_needs_config_then_shows_auth(harness):
 def test_settings_next_must_be_local_path(harness):
     harness.write_cfg()
     r = harness.post("/setari", client_id="cid", client_secret="", cif="1",
-                     environment="test", redirect_uri="x", base_dir="y",
+                     environment="test", redirect_uri="x", base_dir=str(harness.tmp / "inv"),
                      next="https://evil.example/phish")
     assert r.status_code == 303 and "evil" not in r.headers["Location"]
 
@@ -180,7 +115,7 @@ def test_notice_is_localized(harness):
     harness.app.runner.engine = _engine_with(
         core.Notice("Paginated listing unavailable (x); using legacy endpoint.", "legacy_listing"))
     ev = [e for e in harness.synced() if e["type"] == "Notice"][0]
-    assert "legacy endpoint" not in ev["text"] and ev["text"]
+    assert "legacy endpoint" not in ev["text"] and "Listarea paginată" in ev["text"]
 
 
 def test_settings_validation_errors_are_friendly(harness):
@@ -203,7 +138,7 @@ def test_auth_error_is_localized_with_technical_detail(harness):
         "/auth/complete",
         pasted=f"https://localhost/callback?error=access_denied&state={pending.state}",
     ).get_data(as_text=True)
-    assert "certificat" in html.lower()
+    assert "ANAF a refuzat accesul" in html            # the localized headline itself
     assert "Check the certificate side" not in html   # the English hint must not leak
     assert "access_denied" in html                     # technical detail still available
 
@@ -408,7 +343,7 @@ def test_auth_complete_renders_anaf_error_hint(harness):
         "/auth/complete",
         pasted=f"https://localhost/callback?error=access_denied&state={pending.state}",
     ).get_data(as_text=True)
-    assert "access_denied" in html and "certificat" in html.lower()
+    assert "access_denied" in html and "ANAF a refuzat accesul" in html
 
 
 def test_settings_shows_auth_state(harness):
@@ -437,7 +372,7 @@ def test_cli_ui_starts_without_config_so_the_wizard_can_run(harness, monkeypatch
     from efactura_sync import cli, web
     assert not (harness.tmp / "config.json").exists()
     seen = {}
-    monkeypatch.setattr(web, "run_ui", lambda cfg, **kw: seen.setdefault("called", True))
+    monkeypatch.setattr(web, "run_ui", lambda **kw: seen.setdefault("called", True))
     assert cli.main(["ui"]) == 0
     assert seen["called"]
 
@@ -446,7 +381,7 @@ def test_cli_ui_passes_browser_flag_through(harness, monkeypatch):
     harness.write_cfg()
     from efactura_sync import cli, web
     seen = []
-    monkeypatch.setattr(web, "run_ui", lambda cfg, **kw: seen.append(kw.get("open_browser")))
+    monkeypatch.setattr(web, "run_ui", lambda **kw: seen.append(kw.get("open_browser")))
     assert cli.main(["ui"]) == 0
     assert cli.main(["ui", "--no-browser"]) == 0
     assert seen == [True, False]
@@ -455,7 +390,7 @@ def test_cli_ui_passes_browser_flag_through(harness, monkeypatch):
 def test_cli_ui_port_flag(harness, monkeypatch):
     from efactura_sync import cli, web
     seen = []
-    monkeypatch.setattr(web, "run_ui", lambda cfg, **kw: seen.append(kw.get("port")))
+    monkeypatch.setattr(web, "run_ui", lambda **kw: seen.append(kw.get("port")))
     assert cli.main(["ui", "--no-browser", "--port", "8790"]) == 0
     assert cli.main(["ui", "--no-browser"]) == 0
     assert seen == [8790, None]

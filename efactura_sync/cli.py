@@ -33,6 +33,8 @@ def cmd_sync(cfg: dict) -> None:
             print(f"  {ev.message}")
         elif isinstance(ev, core.MessagesListed):
             print(f"  {ev.count} message(s) returned by ANAF.")
+        elif isinstance(ev, core.Duplicate):
+            print(f"  · skipped {ev.download_id}: {ev.reason}")
         elif isinstance(ev, core.PdfFailed):
             print(f"  ! PDF conversion failed for {ev.invoice_id}: {ev.message}")
         elif isinstance(ev, core.InvoiceDone):
@@ -69,12 +71,12 @@ def cmd_status(cfg: dict) -> None:
                   f"{inv.supplier_name}{flag}")
 
 
-def cmd_ui(cfg: dict | None, open_browser: bool = True, port: int | None = None) -> None:
+def cmd_ui(open_browser: bool = True, port: int | None = None) -> None:
     from . import web  # Flask is only imported when the UI is actually requested
     kwargs = {"open_browser": open_browser}
     if port:
         kwargs["port"] = port
-    web.run_ui(cfg, **kwargs)
+    web.run_ui(**kwargs)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -103,14 +105,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.config:
-        core.CONFIG_PATH = Path(args.config).expanduser()
+        # One directory for everything: config, tokens and the dedup DB belong together.
+        config_path = Path(args.config).expanduser()
+        core.set_config_dir(config_path.parent)
+        core.CONFIG_PATH = config_path
+    if args.env:
+        core.ENV_OVERRIDE = args.env        # honoured by every later load_config()
 
     try:
         core.ensure_config_dir()
         if args.command == "ui":
             # The UI has a first-run wizard, so a missing/invalid config must not
             # stop it from starting (found live 2026-09-17).
-            cmd_ui(None, open_browser=not args.no_browser, port=args.port)
+            cmd_ui(open_browser=not args.no_browser, port=args.port)
             return 0
         cfg = core.load_config(env_override=args.env)
         if args.command == "auth":

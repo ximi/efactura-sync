@@ -172,13 +172,14 @@ import pytest as _pytest
 
 
 @_pytest.mark.skipif(_sys.platform == "win32", reason="POSIX file modes")
-def test_load_config_tightens_loose_permissions():
+def test_load_config_tightens_loose_permissions(tmp_path, monkeypatch):
     """config.json holds client_secret; a 0644 file must be tightened to 0600 on load.
 
     Security review 2026-09-17: the README promised this but the script never
     writes config.json, so nothing enforced it.
     """
     import json, stat
+    monkeypatch.setattr(ai, "CONFIG_PATH", tmp_path / "config.json")
     cfg_path = ai.CONFIG_PATH
     cfg_path.write_text(json.dumps({
         "client_id": "cid", "client_secret": "sec", "cif": "RO12345678",
@@ -217,10 +218,8 @@ def test_parse_never_resolves_external_entities():
     assert "LEAKED" not in (meta["supplier_name"] or "")
 
 
-def test_db_dedup_by_download_id_and_hash():
-    db_path = Path(_TMP) / "invoices.db"
-    if db_path.exists():
-        db_path.unlink()
+def test_db_dedup_by_download_id_and_hash(tmp_path, monkeypatch):
+    monkeypatch.setattr(ai, "DB_PATH", tmp_path / "invoices.db")
     conn = ai.connect_db()
     content_hash = hashlib.sha256(SAMPLE_INVOICE).hexdigest()
     conn.execute(

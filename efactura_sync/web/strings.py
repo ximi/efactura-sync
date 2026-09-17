@@ -87,6 +87,11 @@ STRINGS = {
         "val_cif_digits": "CIF: doar cifre (fără RO).",
         "val_environment": "Mediu invalid.",
         "val_fix": "Corectează câmpurile marcate.",
+        "val_folder": "Alege un dosar complet (de exemplu cu butonul Alege…).",
+        "config_corrupt": "Fișierul de setări este corupt și nu a putut fi citit. Completează și salvează setările din nou.",
+        "folder_opened": "Am deschis dosarul în Finder / Explorer.",
+        "folder_open_failed": "Nu am putut deschide dosarul. Calea este: {path}",
+        "quit_busy": "O sincronizare este în curs. Așteaptă să se termine înainte de a închide aplicația.",
         # error headlines by code
         "err_not_authenticated": "Nu ești autentificat la ANAF. Mergi la Setări → Autentificare ANAF.",
         "err_refresh_failed": "Sesiunea ANAF a expirat. Autentifică-te din nou în Setări.",
@@ -101,6 +106,8 @@ STRINGS = {
         "err_pdf_failed": "Conversia în PDF a eșuat; fișierul XML a fost păstrat.",
         "err_bad_download": "Fișierul descărcat de la ANAF este invalid.",
         "err_unknown": "A apărut o eroare neașteptată.",
+        "err_csv_locked": "Fișierul invoices.csv este deschis în alt program (Excel?). Închide-l și sincronizează din nou.",
+        "err_folder_unwritable": "Nu pot scrie în dosarul pentru facturi. Alege alt dosar în Setări.",
         "err_oauth_access_denied": (
             "ANAF a refuzat accesul: autentificarea cu certificatul nu s-a finalizat. "
             "Client ID și Callback URL sunt corecte (altfel ANAF nu ar fi redirecționat înapoi). Verifică:\n"
@@ -115,6 +122,7 @@ STRINGS = {
         "err_oauth_other": "ANAF a returnat eroarea „{code}”.",
         # notices
         "notice_legacy_listing": "Listarea paginată nu este disponibilă; se folosește varianta clasică.",
+        "notice_date_unknown": "O factură nu are dată; a fost pusă în dosarul lunii curente.",
         # log lines
         "ev_started": "Se listează facturile primite din ultimele {days} zile ({env}, CIF {cif})…",
         "ev_listed": "{count} mesaj(e) returnate de ANAF.",
@@ -206,6 +214,11 @@ STRINGS = {
         "val_cif_digits": "CIF: digits only (no RO).",
         "val_environment": "Invalid environment.",
         "val_fix": "Fix the highlighted fields.",
+        "val_folder": "Choose a full folder path (for example with the Choose… button).",
+        "config_corrupt": "The settings file is corrupt and could not be read. Fill in and save the settings again.",
+        "folder_opened": "Opened the folder in Finder / Explorer.",
+        "folder_open_failed": "Could not open the folder. The path is: {path}",
+        "quit_busy": "A sync is running. Wait for it to finish before quitting the app.",
         "err_not_authenticated": "Not authenticated with ANAF. Go to Settings → ANAF authentication.",
         "err_refresh_failed": "Your ANAF session has expired. Authenticate again in Settings.",
         "err_token_exchange_failed": "ANAF rejected the authorization code. Start the authentication again.",
@@ -219,6 +232,8 @@ STRINGS = {
         "err_pdf_failed": "PDF conversion failed; the XML file was kept.",
         "err_bad_download": "The file downloaded from ANAF is invalid.",
         "err_unknown": "An unexpected error occurred.",
+        "err_csv_locked": "invoices.csv is open in another program (Excel?). Close it and synchronize again.",
+        "err_folder_unwritable": "Cannot write to the invoices folder. Choose another folder in Settings.",
         "err_oauth_access_denied": (
             "ANAF denied access: the certificate authentication did not complete. "
             "Your Client ID and Callback URL are fine (ANAF would not have redirected back otherwise). Check:\n"
@@ -232,6 +247,7 @@ STRINGS = {
         "err_oauth_invalid_request": "ANAF rejected the request. Most often the Callback URL in Settings is not identical to the one registered with ANAF (trailing slash, http vs https).",
         "err_oauth_other": "ANAF returned the error “{code}”.",
         "notice_legacy_listing": "Paginated listing is unavailable; using the classic listing.",
+        "notice_date_unknown": "An invoice has no date; it was filed under the current month.",
         "ev_started": "Listing received invoices from the last {days} days ({env}, CIF {cif})…",
         "ev_listed": "{count} message(s) returned by ANAF.",
         "ev_done": "{invoice} — {supplier} ({date})",

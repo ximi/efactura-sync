@@ -10,35 +10,96 @@ English); runs on macOS and Windows with nothing to install.*
 
 ## Pentru utilizatori · For users
 
-**RO**
+### 🇷🇴 Română
 
-1. Descarcă ultima versiune din [Releases](https://github.com/ximi/efactura-sync/releases):
-   `eFactura-Sync-macos-arm64.zip` (Mac cu Apple Silicon), `eFactura-Sync-macos-x86_64.zip`
-   (Mac cu Intel) sau `eFactura-Sync-windows-x64.exe`.
-2. Aplicația nu este semnată digital (v1), așa că sistemul afișează o avertizare **o singură dată**:
-   - **macOS:** dezarhivează, apoi **click dreapta → Deschide** pe `eFactura Sync.app` și confirmă.
-   - **Windows:** la avertizarea SmartScreen apasă **Mai multe informații → Rulează oricum**.
-3. Se deschide browserul cu un asistent de configurare în 3 pași: ce ai nevoie (certificat
-   digital + aplicație OAuth înregistrată la ANAF), datele firmei, autentificarea la ANAF.
-4. Apoi apasă **Sincronizează**. Facturile apar în dosarul ales, ca PDF, pe ani/luni.
+**Ce ai nevoie (o singură dată, înainte de instalare)**
 
-Aplicația rulează local pe calculatorul tău; datele nu pleacă nicăieri în afară de ANAF.
-Se închide din **Setări → Închide aplicația** sau singură după 30 de minute de inactivitate.
+1. **Un certificat digital calificat** (DigiSign, certSIGN, AlfaTrust…) înregistrat în SPV
+   pentru firma ta, cu e-Factura activată. Fără el nu te poți autentifica la ANAF.
+2. **O aplicație OAuth înregistrată la ANAF**, din care obții *Client ID* și *Client secret*:
+   anaf.ro → Servicii online → Înregistrare aplicații developeri → *Înregistrare în vederea
+   accesării serviciilor web* → autentificare în SPV → profil OAuth nou cu un nume oarecare,
+   **Callback URL `https://localhost/callback`** și serviciul **EFACTURA** bifat → *Generare*.
+   Copiază Client ID și Client secret; aplicația ți le cere la prima pornire.
 
-**EN**
+**Instalare**
 
-1. Download the latest release from [Releases](https://github.com/ximi/efactura-sync/releases):
-   `eFactura-Sync-macos-arm64.zip` (Apple Silicon Mac), `eFactura-Sync-macos-x86_64.zip`
-   (Intel Mac) or `eFactura-Sync-windows-x64.exe`.
-2. The app is not code-signed (v1), so the OS warns **once**:
-   - **macOS:** unzip, then **right-click → Open** on `eFactura Sync.app` and confirm.
-   - **Windows:** on the SmartScreen prompt choose **More info → Run anyway**.
-3. Your browser opens with a 3-step setup: what you need (digital certificate + an OAuth
-   app registered with ANAF), your company details, ANAF authentication.
-4. Press **Synchronize**. Invoices land in the folder you chose, as PDFs, by year/month.
+- **macOS:** descarcă `eFactura-Sync-macos-arm64.zip` (Mac cu Apple Silicon, 2020+) sau
+  `eFactura-Sync-macos-x86_64.zip` (Mac cu Intel) din
+  [Releases](https://github.com/ximi/efactura-sync/releases/latest). Dezarhivează și mută
+  `eFactura Sync.app` în *Applications*. **Prima dată: click dreapta → Deschide → Deschide**
+  (aplicația nu este semnată digital, macOS avertizează o singură dată).
+- **Windows:** descarcă `eFactura-Sync-windows-x64.exe` și pune-l unde vrei (de exemplu pe
+  Desktop). La prima pornire, la avertizarea SmartScreen: **Mai multe informații → Rulează
+  oricum**.
 
-Everything runs locally; nothing leaves your computer except requests to ANAF. Quit from
-**Settings → Quit the app**, or it exits by itself after 30 idle minutes.
+**Prima pornire**
+
+Se deschide browserul cu un asistent în 3 pași:
+1. ce ai nevoie (rezumatul de mai sus);
+2. **Client ID, Client secret, CIF-ul firmei** (doar cifre) și **dosarul pentru facturi** —
+   implicit `Documents/Facturi e-Factura`; apasă *Alege…* ca să alegi altul;
+3. **autentificarea la ANAF**: apasă *Începe autentificarea*, deschide adresa afișată,
+   alege certificatul când browserul îl cere, iar după redirecționare copiază adresa
+   completă din bara de adrese (pagina poate să nu se încarce — e normal) și lipește-o
+   în aplicație → *Finalizează*.
+
+**Utilizare zilnică**
+
+Pornește aplicația (dublu-click) → se deschide pagina *Acasă* → **Sincronizează**. Facturile
+primite din ultimele 60 de zile apar ca PDF în dosarul ales, pe ani și luni, iar pagina
+*Facturi* le listează cu buton *PDF*. Fișierul `invoices.csv` din dosar este pentru
+contabil. Dacă aplicația rulează deja, un nou dublu-click doar redeschide pagina. Se
+închide din *Setări → Închide aplicația* sau singură după 30 de minute de inactivitate.
+
+**Actualizare:** descarcă versiunea nouă și înlocuiește aplicația. Setările și facturile
+descărcate rămân (setările în dosarul `.anaf_invoices` din dosarul tău de utilizator).
+
+**Probleme frecvente**
+
+- *ANAF a refuzat accesul (access_denied)*: certificatul nu a fost prezentat. Urmează
+  verificările afișate în aplicație (token USB conectat, fereastra de alegere a
+  certificatului, autentificare mai întâi pe pfinternet.anaf.ro în același browser).
+- *Sesiunea ANAF a expirat*: autentificarea ține ~90 de zile; repet-o din *Setări*.
+- Setările, jurnalul (`ui.log`) și baza de date sunt în `~/.anaf_invoices`
+  (Windows: `C:\Users\<nume>\.anaf_invoices`). Datele nu pleacă nicăieri în afară de ANAF.
+
+### 🇬🇧 English
+
+**What you need (once, before installing)**
+
+1. **A qualified digital certificate** registered in SPV for your company, with e-Factura enabled.
+2. **An OAuth application registered with ANAF**: anaf.ro → Online services → Developer
+   application registration → log in to SPV → new OAuth profile with any name, **Callback URL
+   `https://localhost/callback`** and the **EFACTURA** service ticked → *Generate*. Keep the
+   Client ID and Client secret; the app asks for them on first launch.
+
+**Install**
+
+- **macOS:** download `eFactura-Sync-macos-arm64.zip` (Apple Silicon) or
+  `eFactura-Sync-macos-x86_64.zip` (Intel) from
+  [Releases](https://github.com/ximi/efactura-sync/releases/latest), unzip, move
+  `eFactura Sync.app` to *Applications*. **First time: right-click → Open → Open** (the app
+  is not code-signed; macOS warns once).
+- **Windows:** download `eFactura-Sync-windows-x64.exe`, put it anywhere. On the SmartScreen
+  prompt: **More info → Run anyway**.
+
+**First launch** — your browser opens with a 3-step setup: what you need; Client ID, Client
+secret, company CIF and the invoices folder (default `Documents/Facturi e-Factura`, *Choose…*
+to change); ANAF authentication (open the shown address, pick your certificate, paste the
+full redirected address back — the page itself may not load, that's expected).
+
+**Daily use** — launch the app → *Home* → **Synchronize**. Received invoices from the last
+60 days land as PDFs in your folder by year/month; the *Invoices* page lists them with a
+*PDF* button; `invoices.csv` is for your accountant. Launching again while it runs just
+reopens the page. Quit from *Settings → Quit the app*, or it exits after 30 idle minutes.
+
+**Update** — download the new version and replace the app; settings and invoices stay.
+
+**Common problems** — *access_denied*: the certificate wasn't presented; follow the checks
+shown in-app. *Session expired*: authentication lasts ~90 days; redo it in *Settings*.
+Settings, `ui.log` and the database live in `~/.anaf_invoices`. Nothing leaves your
+computer except requests to ANAF.
 
 ---
 

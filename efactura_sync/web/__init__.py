@@ -22,7 +22,7 @@ import urllib.request
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from flask import (Flask, Response, abort, flash, redirect, render_template, request,
                    send_file, url_for)
@@ -31,9 +31,13 @@ from .. import __version__, core
 from .errors import describe, render_event, technical_detail
 from .strings import LANGUAGES, translator
 
-LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 DEFAULT_PORT = 8765
+PORT_RANGE = 20                     # 8765..8784: where we may listen and where we look
 IDLE_MINUTES = 30
+FINISH_GRACE_SECONDS = 300          # keep serving after a run so the summary can render
+
+log = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
@@ -44,16 +48,29 @@ def _serialize(ev) -> dict:
     return {"type": type(ev).__name__, **dataclasses.asdict(ev)}
 
 
+class _Run:
+    """One sync's event buffer. A stream binds to a run, so a stream that outlives
+    the run never reads into the next one (review fix 2026-09-17)."""
+
+    def __init__(self):
+        self.events: list[dict] = []
+        self.done = threading.Event()
+
+
 class SyncRunner:
     """Runs one core.sync() at a time on a thread and buffers its events for SSE."""
 
     def __init__(self, engine=core.sync):
         self.engine = engine
-        self.events: list[dict] = []
+        self._run = _Run()
+        self._run.done.set()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
-        self._done = threading.Event()
-        self._done.set()
+        self.finished_at = 0.0
+
+    @property
+    def events(self) -> list[dict]:
+        return self._run.events
 
     @property
     def running(self) -> bool:
@@ -63,32 +80,36 @@ class SyncRunner:
         with self._lock:
             if self.running:
                 return False
-            self.events = []
-            self._done.clear()
-            self._thread = threading.Thread(target=self._run, args=(cfg,), daemon=True)
+            run = _Run()
+            self._run = run
+            self._thread = threading.Thread(target=self._drive, args=(cfg, run), daemon=True)
             self._thread.start()
             return True
 
-    def _run(self, cfg: dict) -> None:
+    def _drive(self, cfg: dict, run: _Run) -> None:
         try:
             for ev in self.engine(cfg):
-                self.events.append(_serialize(ev))
+                run.events.append(_serialize(ev))
         except Exception as exc:  # noqa: BLE001 — surface as an event, never a 500
-            self.events.append({"type": "SyncError", "download_id": "", "message": str(exc),
-                                "code": core.error_code(exc)})
+            run.events.append({"type": "SyncError", "download_id": "", "message": str(exc),
+                               "code": core.error_code(exc)})
         finally:
-            self._done.set()
+            self.finished_at = time.time()
+            run.done.set()
 
     def wait(self, timeout: float | None = None) -> bool:
-        return self._done.wait(timeout)
+        return self._run.done.wait(timeout)
 
-    def stream(self, since: int = 0):
-        i = since
+    def stream(self, since: int = 0, touch=None):
+        run = self._run
+        i = max(0, since)
         while True:
-            while i < len(self.events):
-                yield self.events[i]
+            while i < len(run.events):
+                yield run.events[i]
                 i += 1
-            if self._done.is_set() and i >= len(self.events):
+            if touch:
+                touch()                     # a live stream is activity for the watchdog
+            if run.done.is_set() and i >= len(run.events):
                 return
             time.sleep(0.2)
 
@@ -121,9 +142,10 @@ def pick_folder_default(initial) -> str | None:
         if sys.platform == "darwin":
             default = (f' default location POSIX file "{_applescript_str(initial)}"'
                        if Path(initial).is_dir() else "")
-            script = ('tell application "System Events"\n  activate\n'
-                      '  set p to POSIX path of (choose folder with prompt '
-                      f'"Alege dosarul pentru facturi"{default})\nend tell\nreturn p')
+            # No "System Events" wrapper: that costs an Automation-permission prompt
+            # on an unsigned app; a bare `choose folder` needs none.
+            script = ('POSIX path of (choose folder with prompt '
+                      f'"Alege dosarul pentru facturi"{default})')
             out = subprocess.run(["osascript", "-e", script], capture_output=True,
                                  text=True, timeout=600)
             return out.stdout.strip().rstrip("/") or None if out.returncode == 0 else None
@@ -133,7 +155,8 @@ def pick_folder_default(initial) -> str | None:
                   f"$d.SelectedPath = '{initial.replace(chr(39), chr(39) * 2)}'; "
                   "if ($d.ShowDialog() -eq 'OK') { Write-Output $d.SelectedPath }")
             out = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps],
-                                 capture_output=True, text=True, timeout=600)
+                                 capture_output=True, text=True, timeout=600,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             return out.stdout.strip() or None
         out = subprocess.run(["zenity", "--file-selection", "--directory",
                               f"--filename={initial}/"], capture_output=True, text=True,
@@ -170,14 +193,15 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
     @app.before_request
     def guard():
         app.last_activity = time.time()
-        if request.host.split(":")[0] not in LOCAL_HOSTS:
+        if (urlsplit("//" + request.host).hostname or "") not in LOCAL_HOSTS:
             abort(403)
         if request.method == "POST":
             origin = request.headers.get("Origin")
             if origin and (urlparse(origin).hostname or "") not in LOCAL_HOSTS:
                 abort(403)
-            if not secrets.compare_digest(request.form.get("csrf", ""),
-                                          app.config["CSRF_TOKEN"]):
+            # Compare bytes: compare_digest rejects non-ASCII str with a TypeError (500).
+            if not secrets.compare_digest(request.form.get("csrf", "").encode("utf-8"),
+                                          app.config["CSRF_TOKEN"].encode("utf-8")):
                 abort(403)
 
     # ---- helpers --------------------------------------------------------- #
@@ -214,7 +238,8 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
             raw = {**raw, **values}
         return {"raw": raw, "errors": errors or {}, "next_url": next_url,
                 "environments": list(core.REST_BASE),
-                "secret_set": bool(core.read_config_raw().get("client_secret"))}
+                "secret_set": bool(core.read_config_raw().get("client_secret")),
+                "config_problem": core.config_problem()}
 
     def auth_ctx(auth_exc: core.ConfigError | None = None, wizard=False) -> dict:
         tok = core.token_status()
@@ -302,7 +327,8 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
         tr = t()
 
         def generate():
-            for ev in app.runner.stream(since):
+            touch = lambda: setattr(app, "last_activity", time.time())  # noqa: E731
+            for ev in app.runner.stream(since, touch=touch):
                 payload = {**ev, "text": render_event(ev, tr)}
                 yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             yield "event: done\ndata: {}\n\n"
@@ -320,7 +346,15 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
         cfg, resp = load_cfg_or_redirect()
         if resp:
             return resp
-        app.open_path(Path(cfg["base_dir"]).expanduser())
+        folder = Path(cfg["base_dir"]).expanduser()
+        try:
+            folder.mkdir(parents=True, exist_ok=True)   # exists only after a first sync
+            app.open_path(folder)
+        except Exception:  # noqa: BLE001 — a missing opener must not 500
+            log.exception("could not open %s", folder)
+            flash(t()("folder_open_failed", path=str(folder)), "info")
+        else:
+            flash(t()("folder_opened"), "ok")
         return redirect(url_for("invoices"), code=303)
 
     @app.post("/setari")
@@ -336,6 +370,9 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
             "base_dir": form.get("base_dir", "").strip(),
         }
         errors = {}
+        folder = values["base_dir"]
+        if not folder or not Path(folder).expanduser().is_absolute():
+            errors["base_dir"] = tr("val_folder")
         if not values["client_id"]:
             errors["client_id"] = tr("val_required")
         if not values["cif"]:
@@ -398,6 +435,9 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
 
     @app.post("/iesire")
     def quit_app():
+        if app.runner.running:
+            flash(t()("quit_busy"), "info")
+            return redirect(url_for("settings"), code=303)
         app.shutdown_hook()
         return render_template("bye.html")
 
@@ -428,49 +468,61 @@ def _already_running(port: int) -> bool:
         return False
 
 
-def _setup_frozen_logging() -> None:
-    """A windowed bundle has no console: send logs to a file, never crash on print."""
-    if not getattr(sys, "frozen", False):
-        return
-    core.ensure_config_dir()
-    logging.basicConfig(filename=str(core.CONFIG_DIR / "ui.log"), level=logging.INFO,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    if sys.stdout is None:
-        sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
-    if sys.stderr is None:
-        sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+def _find_running(preferred: int) -> int | None:
+    """Our instance may sit on a fallback port; look wherever we might have bound."""
+    for port in range(preferred, preferred + PORT_RANGE):
+        if _already_running(port):
+            return port
+    return None
 
 
-def run_ui(cfg: dict | None, port: int = DEFAULT_PORT, open_browser: bool = True,
+def _idle_expired(app, now: float, idle_minutes: int) -> bool:
+    """Idle means: no request, no live stream, no running sync — and a grace period
+    after a run so a long sync's summary page can still render."""
+    return (now - app.last_activity > idle_minutes * 60
+            and not app.runner.running
+            and now - app.runner.finished_at > FINISH_GRACE_SECONDS)
+
+
+def run_ui(port: int = DEFAULT_PORT, open_browser: bool = True,
            idle_minutes: int = IDLE_MINUTES) -> None:
     """Serve the UI on 127.0.0.1, open the browser, exit on Quit or after idling.
 
     A second launch (double-clicking the app again) reuses the running instance:
     it just opens the browser to it instead of starting another server.
     """
-    _setup_frozen_logging()
-    if _already_running(port):
+    core.setup_frozen_logging()
+    found = _find_running(port)
+    if found:
+        log.info("instance already running on port %d; opening browser", found)
         if open_browser:
-            webbrowser.open(f"http://127.0.0.1:{port}/")
+            webbrowser.open(f"http://127.0.0.1:{found}/")
         return
 
-    from werkzeug.serving import make_server
+    try:
+        from werkzeug.serving import make_server
 
-    port = _free_port(port)
-    app = create_app()
-    server = make_server("127.0.0.1", port, app, threaded=True)
+        port = _free_port(port)
+        app = create_app()
+        server = make_server("127.0.0.1", port, app, threaded=True)
+    except Exception as exc:
+        # The only trace a windowed bundle leaves: reason in the message, so a
+        # grep of ui.log finds it without reading the traceback.
+        log.exception("UI failed to start: %s", exc)
+        raise
     app.shutdown_hook = lambda: threading.Thread(target=server.shutdown, daemon=True).start()
 
     def watchdog():
         while True:
             time.sleep(30)
-            idle = time.time() - app.last_activity
-            if idle > idle_minutes * 60 and not app.runner.running:
+            if _idle_expired(app, time.time(), idle_minutes):
+                log.info("idle for %d minutes; shutting down", idle_minutes)
                 server.shutdown()
                 return
 
     threading.Thread(target=watchdog, daemon=True).start()
     url = f"http://127.0.0.1:{port}/"
+    log.info("eFactura Sync %s listening on %s", __version__, url)
     if open_browser:
         threading.Timer(0.5, webbrowser.open, args=(url,)).start()
     server.serve_forever()
