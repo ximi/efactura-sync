@@ -1,0 +1,18 @@
+# Credentials — never commit. The script reads ~/.anaf_invoices/config.json;
+# a local copy here (used via --config) must stay out of history.
+config.json
+tokens.json
+*.db
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Local tooling / OS
+.claude/settings.local.json
+.DS_Store
+
+# Downloaded invoices, if base_dir is ever pointed inside the repo
+invoices/
