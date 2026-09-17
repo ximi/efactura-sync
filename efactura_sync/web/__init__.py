@@ -12,6 +12,7 @@ import dataclasses
 import json
 import logging
 import os
+import re
 import secrets
 import socket
 import subprocess
@@ -166,11 +167,14 @@ def pick_folder_default(initial) -> str | None:
         return None
 
 
+# One leading slash, then only path/query characters: no "//host", no "/\\host"
+# (browsers read a backslash as an authority start), no CR/LF header tricks.
+_NEXT_RE = re.compile(r"/(?!/)[A-Za-z0-9_\-./?=&%]*")
+
+
 def _safe_next(value: str | None, fallback: str) -> str:
     """Only same-app paths may be redirect targets."""
-    if value and value.startswith("/") and not value.startswith("//"):
-        return value
-    return fallback
+    return value if value and _NEXT_RE.fullmatch(value) else fallback
 
 
 # --------------------------------------------------------------------------- #
@@ -192,7 +196,12 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
 
     @app.before_request
     def guard():
-        app.last_activity = time.time()
+        # Activity for the idle watchdog: only requests a user (or same-origin page)
+        # makes. A foreign page can fire no-cors GETs forever; they carry
+        # Sec-Fetch-Site: cross-site and must not keep the server alive.
+        fetch_site = request.headers.get("Sec-Fetch-Site", "same-origin")
+        if request.path != "/ping" and fetch_site in ("same-origin", "none"):
+            app.last_activity = time.time()
         if (urlsplit("//" + request.host).hostname or "") not in LOCAL_HOSTS:
             abort(403)
         if request.method == "POST":
@@ -203,6 +212,16 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
             if not secrets.compare_digest(request.form.get("csrf", "").encode("utf-8"),
                                           app.config["CSRF_TOKEN"].encode("utf-8")):
                 abort(403)
+
+    @app.after_request
+    def harden(resp):
+        # Clickjacking: a hostile page could frame 127.0.0.1 and place one of our
+        # CSRF-valid buttons under a decoy; refuse to be framed at all.
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["Referrer-Policy"] = "no-referrer"
+        return resp
 
     # ---- helpers --------------------------------------------------------- #
 

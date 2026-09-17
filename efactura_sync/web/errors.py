@@ -17,8 +17,12 @@ def describe(code: str, t) -> str:
 
 
 def technical_detail(message: str) -> str:
-    """First line of a raw message — enough to search support docs, no hint blocks."""
-    return (message or "").strip().splitlines()[0] if message else ""
+    """First line of a raw message, capped — enough to search support docs; never a
+    hint block, never a whole ANAF response body."""
+    if not message:
+        return ""
+    line = message.strip().splitlines()[0]
+    return line if len(line) <= 160 else line[:157] + "…"
 
 
 def render_event(ev: dict, t) -> str:

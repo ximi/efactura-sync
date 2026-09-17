@@ -113,7 +113,14 @@ Dates are when the decision was made.
   per process + `schema_version`; CLI/web render every event; `--env`/`--config`
   coherent; open-folder creates the folder; quit refused mid-sync; frozen logging
   for all commands; quiet folder pickers.
-- Batch B (security hardening) and C (UX) pending — see the review list.
+- Batch B (security hardening) done: X-Frame-Options/CSP frame-ancestors, nosniff,
+  no-referrer; `_safe_next` allows only `/path?query` (no backslash/CRLF); a pasted
+  callback must carry our `state` (bare codes still PKCE-bound); `/ping` and
+  cross-site GETs no longer keep the server alive; config/tokens created O_EXCL 0600;
+  technical detail capped; workflows least-privilege (write only in the release
+  job), third-party action SHA-pinned, tag must equal `__version__`; app hidden
+  from the Dock (LSUIElement).
+- Batch C (UX) pending — see the review list.
 
 ## Deferred (from the 2026-09-17 security review)
 

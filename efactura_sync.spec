@@ -54,9 +54,10 @@ if sys.platform == "darwin":
             "CFBundleVersion": __version__,
             "LSMinimumSystemVersion": "12.0",
             "NSHighResolutionCapable": True,
-            # Background helper that opens a browser; keep it out of the Dock's
-            # foreground so the browser window is what the user sees.
-            "LSUIElement": False,
+            # The browser tab is the whole UI (decision 2026-09-17). Hidden from the
+            # Dock: a generic Dock icon whose Quit cannot reach a plain server
+            # process would only produce "not responding". Quit lives in Setări.
+            "LSUIElement": True,
         },
     )
 else:

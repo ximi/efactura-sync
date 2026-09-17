@@ -386,3 +386,102 @@ def test_folder_pickers_are_quiet(monkeypatch):
 
 def test_anaf_env_vars_are_isolated_from_the_suite():
     assert not any(k in os.environ for k in ("ANAF_CLIENT_ID", "ANAF_CLIENT_SECRET", "ANAF_CIF"))
+
+
+# =========================================================================== #
+# Batch B — security hardening (2026-09-17 review)
+# =========================================================================== #
+
+def test_pages_refuse_framing_and_sniffing(harness):
+    for path in ("/start", "/setari", "/ping"):
+        h = harness.client.get(path).headers
+        assert h.get("X-Frame-Options") == "DENY", path
+        assert "frame-ancestors 'none'" in h.get("Content-Security-Policy", ""), path
+        assert h.get("X-Content-Type-Options") == "nosniff", path
+        assert h.get("Referrer-Policy") == "no-referrer", path
+
+
+def test_safe_next_rejects_backslash_and_scheme_tricks():
+    for bad in ("/\\evil.example", "//evil.example", "https://evil.example", "/x\r\nSet-Cookie: a=b", ""):
+        assert webmod._safe_next(bad, "/fallback") == "/fallback", bad
+    for ok in ("/", "/start?step=3", "/facturi?luna=2026-03&furnizor=a%20b", "/setari"):
+        assert webmod._safe_next(ok, "/fallback") == ok
+
+
+def test_pasted_url_must_carry_the_state(monkeypatch):
+    cfg = {"client_id": "c", "client_secret": "s", "redirect_uri": "https://localhost/callback"}
+    pending = core.begin_auth(cfg)
+    monkeypatch.setattr(core.requests, "post", lambda url, data, timeout, headers: FakeResp(
+        {"access_token": "AT", "refresh_token": "RT", "expires_in": 1}))
+    with pytest.raises(core.ConfigError) as ei:
+        core.complete_auth(cfg, pending, "https://localhost/callback?code=INJECTED")
+    assert ei.value.code == "state_mismatch"
+    # a bare code (CLI habit) is still fine: PKCE binds it to this run
+    assert core.complete_auth(cfg, pending, "BARECODE")["access_token"] == "AT"
+
+
+def test_ping_and_cross_site_requests_do_not_count_as_activity(harness):
+    harness.write_cfg()
+    app = harness.app
+    app.last_activity = 0
+    harness.client.get("/ping")
+    assert app.last_activity == 0
+    harness.client.get("/", headers={"Sec-Fetch-Site": "cross-site"})
+    assert app.last_activity == 0
+    harness.client.get("/", headers={"Sec-Fetch-Site": "same-origin"})
+    assert app.last_activity > 0
+    app.last_activity = 0
+    harness.client.get("/")                      # no header at all (curl, old browsers)
+    assert app.last_activity > 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
+def test_private_files_are_never_world_readable_even_for_an_instant(tmp_path, monkeypatch):
+    import stat
+    monkeypatch.setattr(core, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(core, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr(core, "TOKENS_PATH", tmp_path / "tokens.json")
+    seen = []
+    real_open = os.open
+
+    def spy(path, flags, mode=0o777, *a, **k):
+        seen.append((str(path), flags, mode))
+        return real_open(path, flags, mode, *a, **k)
+
+    monkeypatch.setattr(core.os, "open", spy)
+    (tmp_path / "config.tmp").write_text("stale")       # a leftover must not block us
+    core.save_config({"client_secret": "s"})
+    core.save_tokens({"access_token": "a"})
+    creates = [s for s in seen if s[1] & os.O_CREAT]
+    assert len(creates) == 2 and all(s[2] == 0o600 and s[1] & os.O_EXCL for s in creates)
+    for f in ("config.json", "tokens.json"):
+        assert stat.S_IMODE((tmp_path / f).stat().st_mode) == 0o600
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_stream_since_is_clamped(harness):
+    harness.write_cfg()
+    harness.synced()
+    assert list(harness.app.runner.stream(-5))[0]["type"] == "SyncStarted"
+
+
+def test_technical_detail_is_short_and_single_line():
+    long = "Token refresh failed (400): " + "x" * 500 + "\nRe-run `auth`."
+    d = weberrors.technical_detail(long)
+    assert "\n" not in d and len(d) <= 160
+
+
+def test_workflows_follow_least_privilege_and_pin_third_party_actions():
+    rel = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    import re
+    assert re.search(r"^permissions:\n  contents: read", rel, re.M)      # workflow default
+    assert rel.count("contents: write") == 1                             # release job only
+    assert re.search(r"softprops/action-gh-release@[0-9a-f]{40}", rel)  # SHA-pinned
+    assert re.search(r"^permissions:\n  contents: read", ci, re.M)
+    assert "__version__" in rel and "GITHUB_REF_NAME" in rel             # tag == version gate
+
+
+def test_app_bundle_hides_from_dock():
+    spec = Path("efactura_sync.spec").read_text(encoding="utf-8")
+    assert '"LSUIElement": True' in spec

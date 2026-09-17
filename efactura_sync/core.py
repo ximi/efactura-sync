@@ -306,14 +306,24 @@ def config_problem() -> str | None:
     return None
 
 
+def _write_private(path: Path, text: str) -> None:
+    """Atomic write that is owner-only from the first byte (O_EXCL + mode 0600),
+    not create-then-chmod. A stale .tmp from a crash is discarded first."""
+    tmp = path.with_suffix(".tmp")
+    try:
+        tmp.unlink()
+    except FileNotFoundError:
+        pass
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    tmp.replace(path)
+
+
 def save_config(raw: dict) -> None:
     """Atomically write config.json with owner-only permissions."""
     ensure_config_dir()
-    tmp = CONFIG_PATH.with_suffix(".tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(raw, fh, indent=2, ensure_ascii=False)
-    os.chmod(tmp, 0o600)
-    tmp.replace(CONFIG_PATH)
+    _write_private(CONFIG_PATH, json.dumps(raw, indent=2, ensure_ascii=False))
 
 
 def load_tokens() -> dict | None:
@@ -328,11 +338,7 @@ def load_tokens() -> dict | None:
 
 def save_tokens(tokens: dict) -> None:
     ensure_config_dir()
-    tmp = TOKENS_PATH.with_suffix(".tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(tokens, fh, indent=2)
-    os.chmod(tmp, 0o600)
-    tmp.replace(TOKENS_PATH)
+    _write_private(TOKENS_PATH, json.dumps(tokens, indent=2))
 
 
 # --------------------------------------------------------------------------- #
@@ -467,8 +473,10 @@ def complete_auth(cfg: dict, pending: PendingAuth, pasted: str) -> dict:
         err = params["error"][0]
         raise ConfigError(_oauth_error_message(err, params.get("error_description", [""])[0]),
                           code=f"oauth_{err}")
+    # A pasted URL/query must carry OUR state; only a bare code (no parameters at
+    # all) may skip it, and PKCE still binds that code to this run.
     returned_state = params.get("state", [None])[0]
-    if returned_state and returned_state != pending.state:
+    if params and returned_state != pending.state:
         raise ConfigError("State mismatch — aborting (possible CSRF). Re-run `auth`.",
                           code="state_mismatch")
     code = extract_code(pasted)
