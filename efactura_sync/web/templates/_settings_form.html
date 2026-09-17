@@ -1,35 +1,60 @@
-{# Settings form partial. Expects: raw, errors, next_url, environments, secret_set. #}
-<form method="post" action="{{ url_for('save_settings') }}" class="stack card">
+{# Settings form partial. Expects: raw, errors, next_url, environments, secret_set.
+   Design 2026-09-17: only what a user must provide is visible; environment and
+   callback URL live under "advanced". autocomplete=off keeps the browser from
+   replaying values typed in an earlier session. #}
+<form method="post" action="{{ url_for('save_settings') }}" class="stack card" autocomplete="off">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
 
   {% if errors %}<div class="flash warn-border">{{ t('val_fix') }}</div>{% endif %}
 
   <label for="client_id">{{ t('client_id') }}</label>
-  <input id="client_id" name="client_id" value="{{ raw.get('client_id', '') }}" {{ 'aria-invalid=true' if errors.client_id }}>
+  <input id="client_id" name="client_id" value="{{ raw.get('client_id', '') }}" autocomplete="off" {{ 'aria-invalid=true' if errors.client_id }}>
   {% if errors.client_id %}<div class="field-error">{{ errors.client_id }}</div>{% endif %}
 
   <label for="client_secret">{{ t('client_secret') }} {% if secret_set %}<span class="muted">{{ t('secret_set') }}</span>{% endif %}</label>
-  <input id="client_secret" name="client_secret" type="password" value="" autocomplete="off"
+  <input id="client_secret" name="client_secret" type="password" value="" autocomplete="new-password"
          placeholder="{{ t('secret_keep') if secret_set else '' }}">
 
   <label for="cif">{{ t('cif') }} <span class="hint">({{ t('cif_hint') }})</span></label>
-  <input id="cif" name="cif" value="{{ raw.get('cif', '') }}" {{ 'aria-invalid=true' if errors.cif }}>
+  <input id="cif" name="cif" value="{{ raw.get('cif', '') }}" autocomplete="off" inputmode="numeric" {{ 'aria-invalid=true' if errors.cif }}>
   {% if errors.cif %}<div class="field-error">{{ errors.cif }}</div>{% endif %}
 
-  <label for="environment">{{ t('environment') }}</label>
-  <select id="environment" name="environment">
-    {% for env in environments %}
-      <option value="{{ env }}" {{ 'selected' if raw.get('environment', 'test') == env }}>{{ t('environment_' + env) }}</option>
-    {% endfor %}
-  </select>
-  {% if errors.environment %}<div class="field-error">{{ errors.environment }}</div>{% endif %}
+  <label for="base_dir">{{ t('base_dir') }} <span class="hint">— {{ t('folder_hint') }}</span></label>
+  <div class="row" style="flex-wrap: nowrap;">
+    <input id="base_dir" name="base_dir" value="{{ raw.get('base_dir', '') }}" autocomplete="off" style="flex: 1;">
+    <button type="button" id="pick-folder">{{ t('choose') }}</button>
+  </div>
 
-  <label for="redirect_uri">{{ t('redirect_uri') }}</label>
-  <input id="redirect_uri" name="redirect_uri" value="{{ raw.get('redirect_uri', 'https://localhost/callback') }}">
+  <details style="margin-top: 16px;" {{ 'open' if errors.environment }}>
+    <summary class="muted">{{ t('adv_title') }}</summary>
+    <p class="hint" style="margin: 8px 0 0;">{{ t('adv_hint') }}</p>
 
-  <label for="base_dir">{{ t('base_dir') }}</label>
-  <input id="base_dir" name="base_dir" value="{{ raw.get('base_dir', '') }}">
+    <label for="environment">{{ t('environment') }}</label>
+    <select id="environment" name="environment">
+      {% for env in environments %}
+        <option value="{{ env }}" {{ 'selected' if raw.get('environment', 'prod') == env }}>{{ t('environment_' + env) }}</option>
+      {% endfor %}
+    </select>
+    {% if errors.environment %}<div class="field-error">{{ errors.environment }}</div>{% endif %}
+
+    <label for="redirect_uri">{{ t('redirect_uri') }}</label>
+    <input id="redirect_uri" name="redirect_uri" value="{{ raw.get('redirect_uri', '') }}" autocomplete="off">
+  </details>
 
   <div style="margin-top: 16px;"><button class="primary" type="submit">{{ t('wiz_next') if next_url else t('save') }}</button></div>
 </form>
+<script>
+(function () {
+  const btn = document.getElementById('pick-folder'), input = document.getElementById('base_dir');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      const body = new URLSearchParams({csrf: {{ csrf | tojson }}, initial: input.value});
+      const r = await fetch({{ url_for('choose_folder') | tojson }}, {method: 'POST', body});
+      const j = await r.json();
+      if (j.path) input.value = j.path;
+    } finally { btn.disabled = false; }
+  });
+})();
+</script>

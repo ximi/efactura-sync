@@ -109,6 +109,40 @@ def open_path_default(path) -> None:
         subprocess.Popen(["xdg-open", path])
 
 
+def _applescript_str(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def pick_folder_default(initial) -> str | None:
+    """Native folder dialog, opened by the local app on behalf of the browser page
+    (a web page cannot read folder paths itself). None when cancelled/unavailable."""
+    initial = str(initial or Path.home())
+    try:
+        if sys.platform == "darwin":
+            default = (f' default location POSIX file "{_applescript_str(initial)}"'
+                       if Path(initial).is_dir() else "")
+            script = ('tell application "System Events"\n  activate\n'
+                      '  set p to POSIX path of (choose folder with prompt '
+                      f'"Alege dosarul pentru facturi"{default})\nend tell\nreturn p')
+            out = subprocess.run(["osascript", "-e", script], capture_output=True,
+                                 text=True, timeout=600)
+            return out.stdout.strip().rstrip("/") or None if out.returncode == 0 else None
+        if sys.platform.startswith("win"):
+            ps = ("Add-Type -AssemblyName System.Windows.Forms; "
+                  "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
+                  f"$d.SelectedPath = '{initial.replace(chr(39), chr(39) * 2)}'; "
+                  "if ($d.ShowDialog() -eq 'OK') { Write-Output $d.SelectedPath }")
+            out = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps],
+                                 capture_output=True, text=True, timeout=600)
+            return out.stdout.strip() or None
+        out = subprocess.run(["zenity", "--file-selection", "--directory",
+                              f"--filename={initial}/"], capture_output=True, text=True,
+                             timeout=600)
+        return out.stdout.strip() or None
+    except Exception:  # noqa: BLE001 — no dialog available: the text field still works
+        return None
+
+
 def _safe_next(value: str | None, fallback: str) -> str:
     """Only same-app paths may be redirect targets."""
     if value and value.startswith("/") and not value.startswith("//"):
@@ -120,13 +154,14 @@ def _safe_next(value: str | None, fallback: str) -> str:
 # App factory
 # --------------------------------------------------------------------------- #
 
-def create_app(open_path=None, shutdown=None) -> Flask:
+def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
     app = Flask(__name__, template_folder="templates")
     app.secret_key = secrets.token_urlsafe(32)          # flash() only; local, per run
     app.config["CSRF_TOKEN"] = secrets.token_urlsafe(32)
     app.runner = SyncRunner()
     app.pending_auth = None
     app.open_path = open_path or open_path_default
+    app.pick_folder = pick_folder or pick_folder_default
     app.shutdown_hook = shutdown or (lambda: None)
     app.last_activity = time.time()
 
@@ -171,7 +206,10 @@ def create_app(open_path=None, shutdown=None) -> Flask:
         return datetime.fromtimestamp(ts).strftime("%Y-%m-%d") if ts else ""
 
     def form_ctx(errors=None, next_url=None, values=None) -> dict:
-        raw = core.read_config_raw()
+        raw = {"environment": core.DEFAULT_ENVIRONMENT,
+               "redirect_uri": core.DEFAULT_REDIRECT_URI,
+               "base_dir": str(core.DEFAULT_BASE_DIR),
+               **core.read_config_raw()}
         if values:
             raw = {**raw, **values}
         return {"raw": raw, "errors": errors or {}, "next_url": next_url,
@@ -271,6 +309,11 @@ def create_app(open_path=None, shutdown=None) -> Flask:
 
         return Response(generate(), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    @app.post("/alege-dosar")
+    def choose_folder():
+        initial = request.form.get("initial") or str(core.DEFAULT_BASE_DIR)
+        return {"path": app.pick_folder(initial)}
 
     @app.post("/deschide-dosar")
     def open_folder():

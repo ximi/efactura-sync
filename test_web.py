@@ -38,10 +38,16 @@ def harness(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "api_get", fake.api_get)
     monkeypatch.setattr(core, "xml_to_pdf", lambda xml, standard: b"%PDF-fake")
 
-    calls = {"opened": [], "shutdown": 0}
+    calls = {"opened": [], "shutdown": 0, "pick_result": None, "pick_initial": None}
+
+    def pick(initial):
+        calls["pick_initial"] = str(initial)
+        return calls["pick_result"]
+
     app = create_app(
         open_path=lambda p: calls["opened"].append(str(p)),
         shutdown=lambda: calls.__setitem__("shutdown", calls["shutdown"] + 1),
+        pick_folder=pick,
     )
     app.config["TESTING"] = True
 
@@ -444,3 +450,98 @@ def test_cli_ui_passes_browser_flag_through(harness, monkeypatch):
     assert cli.main(["ui"]) == 0
     assert cli.main(["ui", "--no-browser"]) == 0
     assert seen == [True, False]
+
+
+def test_cli_ui_port_flag(harness, monkeypatch):
+    from efactura_sync import cli, web
+    seen = []
+    monkeypatch.setattr(web, "run_ui", lambda cfg, **kw: seen.append(kw.get("port")))
+    assert cli.main(["ui", "--no-browser", "--port", "8790"]) == 0
+    assert cli.main(["ui", "--no-browser"]) == 0
+    assert seen == [8790, None]
+
+
+# --------------------------------------------------------------------------- #
+# Settings form ergonomics (design feedback 2026-09-17): sensible defaults,
+# advanced section, native folder picker, no browser autofill of stale values.
+# --------------------------------------------------------------------------- #
+
+def test_form_defaults_are_sensible_on_first_run(harness):
+    html = harness.client.get("/start?step=2").get_data(as_text=True)
+    assert "Facturi e-Factura" in html                          # default folder prefilled
+    assert 'value="prod" selected' in html                      # Producție by default
+    assert 'value="https://localhost/callback"' in html         # callback prefilled
+    assert "Setări avansate" in html                            # env + callback tucked away
+    assert html.index("Setări avansate") > html.index('name="base_dir"')
+
+
+def test_form_disables_browser_autofill(harness):
+    harness.write_cfg()
+    html = harness.client.get("/setari").get_data(as_text=True)
+    assert 'autocomplete="off"' in html
+    assert 'name="client_secret"' in html and 'autocomplete="new-password"' in html
+
+
+def test_pick_folder_uses_injected_picker_and_returns_json(harness):
+    harness.write_cfg()
+    harness.calls["pick_result"] = "/Users/someone/Documents/Facturi"
+    r = harness.post("/alege-dosar", initial="/Users/someone")
+    assert r.status_code == 200 and r.get_json() == {"path": "/Users/someone/Documents/Facturi"}
+    assert harness.calls["pick_initial"] == "/Users/someone"
+
+
+def test_pick_folder_cancel_returns_null(harness):
+    harness.write_cfg()
+    harness.calls["pick_result"] = None
+    assert harness.post("/alege-dosar").get_json() == {"path": None}
+
+
+def test_pick_folder_requires_csrf(harness):
+    harness.write_cfg()
+    assert harness.client.post("/alege-dosar", data={}).status_code == 403
+
+
+# --------------------------------------------------------------------------- #
+# Table/log polish (design feedback 2026-09-17)
+# --------------------------------------------------------------------------- #
+
+def test_log_hidden_until_there_is_something_to_show(harness):
+    harness.write_cfg()
+    html = harness.client.get("/").get_data(as_text=True)
+    assert 'id="log"' not in html and ">Jurnal<" not in html
+    harness.synced()
+    html = harness.client.get("/").get_data(as_text=True)
+    assert 'id="log"' in html
+
+
+def test_invoice_table_has_no_type_column_but_flags_credit_notes(harness):
+    harness.write_cfg()
+    harness.synced()                                  # one invoice + one credit note
+    html = harness.client.get("/facturi").get_data(as_text=True)
+    assert "<th>Tip</th>" not in html
+    assert html.count('class="badge"') == 1 and "notă de credit" in html
+    assert "factură</" not in html                    # no per-row "invoice" noise
+
+
+def test_invoice_dates_do_not_wrap(harness):
+    harness.write_cfg()
+    harness.synced()
+    html = harness.client.get("/facturi").get_data(as_text=True)
+    assert '<td class="nowrap">2026-03-14</td>' in html
+    assert html.count('<td class="nowrap">') == 3 * 2          # date, invoice, action × 2 rows
+
+
+def test_home_has_no_environment_card_but_flags_test_mode(harness):
+    harness.write_cfg(environment="prod")
+    html = harness.client.get("/").get_data(as_text=True)
+    assert "· CIF" not in html and ">Mediu<" not in html and "Mediu de test" not in html
+    harness.write_cfg(environment="test")
+    html = harness.client.get("/").get_data(as_text=True)
+    assert "Mediu de test" in html and "· CIF" not in html
+
+
+def test_supplier_cif_is_on_its_own_line(harness):
+    harness.write_cfg()
+    harness.synced()
+    html = harness.client.get("/facturi").get_data(as_text=True)
+    assert 'Furnizor Demo SRL<div class="muted cif">RO87654321</div>' in html

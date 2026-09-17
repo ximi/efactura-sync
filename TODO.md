@@ -29,9 +29,11 @@ Dates are when the decision was made.
   the UI now always starts so the wizard can run. Regression test in `test_web.py`.
 - Found by the WP4 bundle smoke test: PyInstaller runs `__main__.py` as a top-level
   script, so its relative import crashed the app at launch; now absolute.
-- **Unverified until the first tagged release:** the `macos-15-intel` runner label
-  (GitHub retired `macos-13`); the Windows bundle (`os.startfile`, no-console
-  logging); antivirus/SmartScreen behaviour on the unsigned `.exe`.
+- v0.1.0 tagged 2026-09-17: CI green on ubuntu/macos/windows; Release built all
+  three bundles on the first run (`macos-15-intel` label confirmed).
+- **Still unverified:** the Windows `.exe` at runtime (`os.startfile`, no-console
+  logging) — it builds, nobody has launched it; antivirus/SmartScreen behaviour on
+  the unsigned `.exe`; the Intel-Mac `.app` at runtime.
 
 ## WP1 — Engine extraction (½–1 day)
 

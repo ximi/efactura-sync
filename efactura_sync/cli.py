@@ -69,9 +69,12 @@ def cmd_status(cfg: dict) -> None:
                   f"{inv.supplier_name}{flag}")
 
 
-def cmd_ui(cfg: dict | None, open_browser: bool = True) -> None:
+def cmd_ui(cfg: dict | None, open_browser: bool = True, port: int | None = None) -> None:
     from . import web  # Flask is only imported when the UI is actually requested
-    web.run_ui(cfg, open_browser=open_browser)
+    kwargs = {"open_browser": open_browser}
+    if port:
+        kwargs["port"] = port
+    web.run_ui(cfg, **kwargs)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -90,6 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
     ui = sub.add_parser("ui", help="Open the local web interface in your browser.")
     ui.add_argument("--no-browser", action="store_true",
                     help="Start the server without opening a browser window.")
+    ui.add_argument("--port", type=int, default=None,
+                    help="Local port to serve on (default 8765, next free if taken).")
     return parser
 
 
@@ -105,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "ui":
             # The UI has a first-run wizard, so a missing/invalid config must not
             # stop it from starting (found live 2026-09-17).
-            cmd_ui(None, open_browser=not args.no_browser)
+            cmd_ui(None, open_browser=not args.no_browser, port=args.port)
             return 0
         cfg = core.load_config(env_override=args.env)
         if args.command == "auth":

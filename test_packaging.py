@@ -18,7 +18,7 @@ from efactura_sync import __main__ as entry, __version__, cli, core, web  # noqa
 
 def test_main_module_defaults_to_ui(monkeypatch):
     seen = []
-    monkeypatch.setattr(cli, "cmd_ui", lambda cfg, open_browser=True: seen.append("ui"))
+    monkeypatch.setattr(cli, "cmd_ui", lambda cfg, **kw: seen.append("ui"))
     assert entry.run([]) == 0
     assert seen == ["ui"]
 

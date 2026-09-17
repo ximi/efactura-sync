@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="row" style="justify-content: space-between; margin-bottom: 16px;">
-  <h1 style="margin:0">{{ t('nav_home') }}</h1>
+  <div>
+    <h1 style="margin:0">{{ t('nav_home') }}</h1>
+    {% if report.environment != 'prod' %}<div class="muted" style="font-size: 13px;">{{ t('test_mode') }}</div>{% endif %}
+  </div>
   <form method="post" action="{{ url_for('start_sync') }}">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button class="primary big" type="submit" {{ 'disabled' if running }}>
@@ -17,13 +20,13 @@
   <div class="card"><div class="k">{{ t('this_month') }}</div><div class="v">{{ report.this_month }}</div></div>
   <div class="card"><div class="k">{{ t('pdf_failed') }}</div>
     <div class="v {{ 'warn' if report.pdf_failed }}">{{ report.pdf_failed }}</div></div>
-  <div class="card"><div class="k">{{ t('environment') }}</div>
-    <div class="v small">{{ t('environment_' + report.environment) }} · CIF {{ report.cif }}</div></div>
 </div>
 
+{% if lines or running %}
 <h2>{{ t('log') }}</h2>
 <div class="log" id="log">{% for line in lines %}{{ line }}
 {% endfor %}</div>
+{% endif %}
 
 {% if report.recent %}
 <h2>{{ t('recent') }}</h2>

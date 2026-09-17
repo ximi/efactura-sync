@@ -23,17 +23,15 @@
 {% if rows %}
 <table>
   <thead><tr>
-    <th>{{ t('col_date') }}</th><th>{{ t('col_invoice') }}</th><th>{{ t('col_supplier') }}</th>
-    <th>{{ t('col_type') }}</th><th></th>
+    <th>{{ t('col_date') }}</th><th>{{ t('col_invoice') }}</th><th>{{ t('col_supplier') }}</th><th></th>
   </tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
-      <td>{{ r.issue_date or '—' }}</td>
-      <td>{{ r.invoice_id }}</td>
-      <td>{{ r.supplier_name }} <span class="muted">{{ r.supplier_cif }}</span></td>
-      <td>{{ t('credit_note') if r.doc_type == 'credit_note' else t('invoice') }}</td>
-      <td>{% if r.pdf_ok and r.pdf_path %}<a class="btn" href="{{ url_for('pdf', download_id=r.download_id) }}" target="_blank">{{ t('open_pdf') }}</a>
+      <td class="nowrap">{{ r.issue_date or '—' }}</td>
+      <td class="nowrap">{{ r.invoice_id }}{% if r.doc_type == 'credit_note' %} <span class="badge">{{ t('credit_note') }}</span>{% endif %}</td>
+      <td>{{ r.supplier_name }}<div class="muted cif">{{ r.supplier_cif }}</div></td>
+      <td class="nowrap">{% if r.pdf_ok and r.pdf_path %}<a class="btn" href="{{ url_for('pdf', download_id=r.download_id) }}" target="_blank">{{ t('open_pdf') }}</a>
           {% else %}<span class="muted">{{ t('xml_only') }}</span>{% endif %}</td>
     </tr>
   {% endfor %}

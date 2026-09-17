@@ -253,3 +253,14 @@ def test_shim_keeps_old_entry_point_working():
     import anaf_invoices
     from efactura_sync import cli
     assert anaf_invoices.main is cli.main
+
+
+def test_load_config_defaults_prod_and_documents_folder(tmp_path, monkeypatch):
+    """Released-app defaults (2026-09-17): real invoices by default, a visible folder."""
+    import json
+    monkeypatch.setattr(core, "CONFIG_PATH", tmp_path / "config.json")
+    (tmp_path / "config.json").write_text(json.dumps({"client_id": "c", "client_secret": "s", "cif": "1"}))
+    cfg = core.load_config()
+    assert cfg["environment"] == "prod"
+    assert cfg["base_dir"] == str(core.DEFAULT_BASE_DIR)
+    assert core.DEFAULT_BASE_DIR.name == "Facturi e-Factura" and core.DEFAULT_BASE_DIR.parent.name == "Documents"

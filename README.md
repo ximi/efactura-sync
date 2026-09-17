@@ -100,14 +100,14 @@ Create `~/.anaf_invoices/config.json` (the directory is created automatically on
   "client_secret": "your-client-secret",
   "redirect_uri": "https://localhost/callback",
   "cif": "12345678",
-  "environment": "test",
-  "base_dir": "~/.anaf_invoices/invoices"
+  "environment": "prod",
+  "base_dir": "~/Documents/Facturi e-Factura"
 }
 ```
 
 - `cif` — your company fiscal code, numeric, **no `RO` prefix** and no spaces.
-- `environment` — `test` while validating, `prod` for real invoices.
-- `base_dir` — where PDFs are filed (optional; defaults to `~/.anaf_invoices/invoices`).
+- `environment` — `prod` (default) for real invoices; `test` to validate a new setup.
+- `base_dir` — where PDFs are filed (optional; defaults to `~/Documents/Facturi e-Factura`).
 
 Secrets can also be supplied via environment variables, which override the file:
 `ANAF_CLIENT_ID`, `ANAF_CLIENT_SECRET`, `ANAF_CIF`.

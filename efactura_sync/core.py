@@ -40,6 +40,13 @@ CONFIG_PATH = CONFIG_DIR / "config.json"
 TOKENS_PATH = CONFIG_DIR / "tokens.json"
 DB_PATH = CONFIG_DIR / "invoices.db"
 
+# Released-app defaults (design decision 2026-09-17): real invoices unless told
+# otherwise, filed somewhere visible and backed up; the callback URL is what the
+# wizard tells users to register, so it is a default rather than a question.
+DEFAULT_ENVIRONMENT = "prod"
+DEFAULT_BASE_DIR = Path.home() / "Documents" / "Facturi e-Factura"
+DEFAULT_REDIRECT_URI = "https://localhost/callback"
+
 AUTH_URL = "https://logincert.anaf.ro/anaf-oauth2/v1/authorize"
 TOKEN_URL = "https://logincert.anaf.ro/anaf-oauth2/v1/token"
 
@@ -208,9 +215,9 @@ def load_config(env_override: str | None = None) -> dict:
     if env_override:
         cfg["environment"] = env_override
 
-    cfg.setdefault("environment", "test")
-    cfg.setdefault("redirect_uri", "https://localhost/callback")
-    cfg.setdefault("base_dir", str(CONFIG_DIR / "invoices"))
+    cfg.setdefault("environment", DEFAULT_ENVIRONMENT)
+    cfg.setdefault("redirect_uri", DEFAULT_REDIRECT_URI)
+    cfg.setdefault("base_dir", str(DEFAULT_BASE_DIR))
 
     missing = [k for k in ("client_id", "client_secret", "cif") if not cfg.get(k)]
     if missing:
