@@ -11,6 +11,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# PyInstaller output
+build/
+dist/
+
 # Local tooling / OS
 .claude/settings.local.json
 .claude/launch.json

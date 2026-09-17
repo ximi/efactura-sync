@@ -1,7 +1,50 @@
-# ANAF e-Factura Invoice Downloader
+# eFactura Sync
 
-Download **received** invoices from ANAF's SPV (Spațiul Privat Virtual) and file them
-locally as **PDFs**, organized by month, with a CSV index for accounting.
+Descarcă facturile **primite** din SPV (ANAF e-Factura) și le salvează local ca **PDF**,
+organizate pe luni, cu un fișier CSV pentru contabilitate. Are o interfață în browser,
+în română (și engleză), și rulează pe macOS și Windows fără instalare.
+
+*Download **received** invoices from ANAF's SPV and file them locally as **PDFs**,
+organized by month, with a CSV index for accounting. Browser UI in Romanian (and
+English); runs on macOS and Windows with nothing to install.*
+
+## Pentru utilizatori · For users
+
+**RO**
+
+1. Descarcă ultima versiune din [Releases](https://github.com/ximi/efactura-sync/releases):
+   `eFactura-Sync-macos-arm64.zip` (Mac cu Apple Silicon), `eFactura-Sync-macos-x86_64.zip`
+   (Mac cu Intel) sau `eFactura-Sync-windows-x64.exe`.
+2. Aplicația nu este semnată digital (v1), așa că sistemul afișează o avertizare **o singură dată**:
+   - **macOS:** dezarhivează, apoi **click dreapta → Deschide** pe `eFactura Sync.app` și confirmă.
+   - **Windows:** la avertizarea SmartScreen apasă **Mai multe informații → Rulează oricum**.
+3. Se deschide browserul cu un asistent de configurare în 3 pași: ce ai nevoie (certificat
+   digital + aplicație OAuth înregistrată la ANAF), datele firmei, autentificarea la ANAF.
+4. Apoi apasă **Sincronizează**. Facturile apar în dosarul ales, ca PDF, pe ani/luni.
+
+Aplicația rulează local pe calculatorul tău; datele nu pleacă nicăieri în afară de ANAF.
+Se închide din **Setări → Închide aplicația** sau singură după 30 de minute de inactivitate.
+
+**EN**
+
+1. Download the latest release from [Releases](https://github.com/ximi/efactura-sync/releases):
+   `eFactura-Sync-macos-arm64.zip` (Apple Silicon Mac), `eFactura-Sync-macos-x86_64.zip`
+   (Intel Mac) or `eFactura-Sync-windows-x64.exe`.
+2. The app is not code-signed (v1), so the OS warns **once**:
+   - **macOS:** unzip, then **right-click → Open** on `eFactura Sync.app` and confirm.
+   - **Windows:** on the SmartScreen prompt choose **More info → Run anyway**.
+3. Your browser opens with a 3-step setup: what you need (digital certificate + an OAuth
+   app registered with ANAF), your company details, ANAF authentication.
+4. Press **Synchronize**. Invoices land in the folder you chose, as PDFs, by year/month.
+
+Everything runs locally; nothing leaves your computer except requests to ANAF. Quit from
+**Settings → Quit the app**, or it exits by itself after 30 idle minutes.
+
+---
+
+## For developers
+
+The sections below cover the command-line tool and the code.
 
 ANAF stores invoices only as UBL XML. This tool downloads the XML, converts it to a
 human-readable PDF using ANAF's own public renderer, and keeps the XML + original ZIP
@@ -117,11 +160,21 @@ Useful flags: `--env prod|test` (override environment), `--config /path/to/confi
 ```bash
 pip install -r requirements-dev.txt
 pytest -q
+python anaf_invoices.py ui          # web UI (or: python -m efactura_sync)
 ```
 
 The engine lives in `efactura_sync/core.py` and reports progress as events;
-`efactura_sync/cli.py` is the terminal front end. `anaf_invoices.py` is a thin
-compatibility shim.
+`efactura_sync/cli.py` is the terminal front end; `efactura_sync/web/` is the
+browser UI. `anaf_invoices.py` is a thin compatibility shim.
+
+### Building the desktop bundles
+
+```bash
+pyinstaller efactura_sync.spec      # dist/eFactura Sync.app  or  dist/eFactura-Sync.exe
+```
+
+Tagging a commit `vX.Y.Z` makes GitHub Actions build all three bundles and attach
+them to a Release (`.github/workflows/release.yml`).
 
 ## Files & locations
 

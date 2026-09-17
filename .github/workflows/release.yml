@@ -1,0 +1,64 @@
+name: Release
+
+# Tag a commit `vX.Y.Z` to build unsigned bundles for macOS (Apple Silicon and
+# Intel) and Windows and attach them to a GitHub Release. Decision 2026-09-17:
+# unsigned in v1; the README documents the one-time Gatekeeper/SmartScreen click.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest,   name: macos-arm64 }
+          - { os: macos-15-intel, name: macos-x86_64 }
+          - { os: windows-latest, name: windows-x64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q
+      - run: pyinstaller efactura_sync.spec
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p out
+          ditto -c -k --keepParent "dist/eFactura Sync.app" "out/eFactura-Sync-${{ matrix.name }}.zip"
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p out
+          cp dist/eFactura-Sync.exe "out/eFactura-Sync-${{ matrix.name }}.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

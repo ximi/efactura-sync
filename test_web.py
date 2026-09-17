@@ -265,7 +265,9 @@ def test_settings_post_writes_config_keeps_secret_when_blank(harness):
     assert saved["client_secret"] == "topsecret-value"   # blank means keep
     assert saved["cif"] == "60000000"                    # RO prefix stripped
     assert saved["environment"] == "prod"
-    assert oct((harness.tmp / "config.json").stat().st_mode & 0o777) == "0o600"
+    import sys
+    if sys.platform != "win32":                    # POSIX file modes only
+        assert oct((harness.tmp / "config.json").stat().st_mode & 0o777) == "0o600"
 
 
 def test_settings_post_replaces_secret_when_given(harness):

@@ -167,6 +167,11 @@ def test_csv_leaves_ordinary_cells_untouched():
     assert row["invoice_id"] == "FAC-2026-001"
 
 
+import sys as _sys
+import pytest as _pytest
+
+
+@_pytest.mark.skipif(_sys.platform == "win32", reason="POSIX file modes")
 def test_load_config_tightens_loose_permissions():
     """config.json holds client_secret; a 0644 file must be tightened to 0600 on load.
 

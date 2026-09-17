@@ -22,9 +22,16 @@ Dates are when the decision was made.
 
 ## Progress
 
-- WP1 done 2026-09-17 (`f05626f`). WP2 done 2026-09-17 (`3a97598`). WP3 done 2026-09-17.
+- WP1 done 2026-09-17 (`f05626f`). WP2 done 2026-09-17 (`3a97598`). WP3 done
+  2026-09-17 (`801df42`). WP4 done 2026-09-17 (macOS bundle built and smoke-tested
+  locally; Windows and Intel builds run only in CI).
 - Found live during WP3: `ui` refused to start without a config (exit 2) — fixed;
   the UI now always starts so the wizard can run. Regression test in `test_web.py`.
+- Found by the WP4 bundle smoke test: PyInstaller runs `__main__.py` as a top-level
+  script, so its relative import crashed the app at launch; now absolute.
+- **Unverified until the first tagged release:** the `macos-15-intel` runner label
+  (GitHub retired `macos-13`); the Windows bundle (`os.startfile`, no-console
+  logging); antivirus/SmartScreen behaviour on the unsigned `.exe`.
 
 ## WP1 — Engine extraction (½–1 day)
 

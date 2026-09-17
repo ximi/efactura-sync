@@ -10,12 +10,15 @@ by a client-supplied path.
 
 import dataclasses
 import json
+import logging
+import os
 import secrets
 import socket
 import subprocess
 import sys
 import threading
 import time
+import urllib.request
 import webbrowser
 from datetime import datetime
 from pathlib import Path
@@ -196,6 +199,11 @@ def create_app(open_path=None, shutdown=None) -> Flask:
 
     # ---- pages ----------------------------------------------------------- #
 
+    @app.get("/ping")
+    def ping():
+        # Lets a second launch recognise a running instance (see run_ui).
+        return {"app": "efactura-sync", "version": __version__}
+
     @app.get("/")
     def home():
         cfg, resp = load_cfg_or_redirect()
@@ -368,9 +376,41 @@ def _free_port(preferred: int) -> int:
     raise RuntimeError("No free local port found.")
 
 
+def _already_running(port: int) -> bool:
+    """True if *our* app answers on the port (not just anything listening)."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/ping", timeout=0.5) as resp:
+            return json.load(resp).get("app") == "efactura-sync"
+    except Exception:  # noqa: BLE001 — closed port, other app, timeout: all "no"
+        return False
+
+
+def _setup_frozen_logging() -> None:
+    """A windowed bundle has no console: send logs to a file, never crash on print."""
+    if not getattr(sys, "frozen", False):
+        return
+    core.ensure_config_dir()
+    logging.basicConfig(filename=str(core.CONFIG_DIR / "ui.log"), level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+
+
 def run_ui(cfg: dict | None, port: int = DEFAULT_PORT, open_browser: bool = True,
            idle_minutes: int = IDLE_MINUTES) -> None:
-    """Serve the UI on 127.0.0.1, open the browser, exit on Quit or after idling."""
+    """Serve the UI on 127.0.0.1, open the browser, exit on Quit or after idling.
+
+    A second launch (double-clicking the app again) reuses the running instance:
+    it just opens the browser to it instead of starting another server.
+    """
+    _setup_frozen_logging()
+    if _already_running(port):
+        if open_browser:
+            webbrowser.open(f"http://127.0.0.1:{port}/")
+        return
+
     from werkzeug.serving import make_server
 
     port = _free_port(port)
