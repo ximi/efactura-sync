@@ -204,7 +204,7 @@ def test_settings_post_writes_config_keeps_secret_when_blank(harness):
     saved = json.loads((harness.tmp / "config.json").read_text())
     assert saved["client_id"] == "cid2"
     assert saved["client_secret"] == "topsecret-value"   # blank means keep
-    assert saved["cif"] == "60000000"                    # RO prefix stripped
+    assert saved["firms"][0]["cif"] == "60000000"        # RO prefix stripped; WP7a: on the firm
     assert saved["environment"] == "prod"
     import sys
     if sys.platform != "win32":                    # POSIX file modes only

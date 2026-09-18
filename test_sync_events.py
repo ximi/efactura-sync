@@ -109,9 +109,9 @@ def test_legacy_listing_fallback_emits_notice(env):
     assert events[-1].new == 1
 
 
-def test_sync_records_last_run(env):
+def test_sync_records_last_run_per_firm(env):
     env(two_invoices())
-    assert core.get_state(core.connect_db(), "last_run")
+    assert core.get_state(core.connect_db(), "last_run:f1")      # WP7a: keyed by firm
 
 
 # --------------------------------------------------------------------------- #

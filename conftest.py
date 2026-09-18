@@ -126,7 +126,7 @@ def env(tmp_path, monkeypatch):
     """Isolated DB + base_dir; returns a runner that yields the event list."""
     from efactura_sync import core
     monkeypatch.setattr(core, "DB_PATH", tmp_path / "invoices.db")
-    cfg = {"environment": "test", "cif": "1", "base_dir": str(tmp_path / "inv")}
+    cfg = {"environment": "test", "cif": "1", "base_dir": str(tmp_path / "inv"), "firm_id": "f1"}
 
     def run(fake, pdf=lambda xml, standard: b"%PDF-fake"):
         monkeypatch.setattr(core, "api_get", fake.api_get)

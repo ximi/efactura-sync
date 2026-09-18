@@ -52,8 +52,11 @@ DEFAULT_REDIRECT_URI = "https://localhost/callback"
 # Process-wide environment override (`--env` for commands that load config
 # lazily, like `ui`). None means "whatever config.json says".
 ENV_OVERRIDE: str | None = None
+# `--firm <id|cif>`: which firm a CLI run acts on. None means the selected one.
+FIRM_OVERRIDE: str | None = None
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2               # 2 (WP7a, 2026-09-18): firm_id on every row
+LEGACY_FIRM_NAME = "Firma mea"   # name given to the firm migrated from a single-cif config
 _SCHEMA_READY: set[str] = set()   # DB paths whose schema was ensured this process
 
 log = logging.getLogger(__name__)
@@ -252,6 +255,23 @@ def load_config(env_override: str | None = None) -> dict:
     except ValueError as exc:
         raise ConfigError(f"config.json is not valid JSON: {exc}", code="bad_config") from exc
 
+    cfg = normalize_config_raw(cfg)
+
+    # The selected firm (WP7a): its cif/base_dir become the effective values, so
+    # the engine and the pages keep working on exactly one firm at a time.
+    firm = find_firm(cfg, FIRM_OVERRIDE) if FIRM_OVERRIDE else selected_firm(cfg)
+    if FIRM_OVERRIDE and firm is None:
+        raise ConfigError(f"No firm with id or CUI {FIRM_OVERRIDE!r}.", code="unknown_firm")
+    if firm:
+        cfg["cif"] = firm["cif"]
+        cfg["base_dir"] = firm.get("base_dir") or str(DEFAULT_BASE_DIR)
+        cfg["firm_id"] = firm["id"]
+        cfg["firm_name"] = firm["name"]
+    else:
+        cfg["cif"] = ""
+        cfg["firm_id"] = ""
+        cfg["firm_name"] = ""
+
     # Environment-variable overrides.
     cfg["client_id"] = os.environ.get("ANAF_CLIENT_ID", cfg.get("client_id"))
     cfg["client_secret"] = os.environ.get("ANAF_CLIENT_SECRET", cfg.get("client_secret"))
@@ -286,15 +306,83 @@ def normalize_cif(value: str) -> str:
 
 
 def read_config_raw() -> dict:
-    """The config file as written, without validation. {} if absent or unreadable
-    (WP2: settings form) — see config_problem() for why it may be empty."""
+    """The config file as written (normalized to the `firms` shape), without
+    validation. {} if absent or unreadable — see config_problem() for why."""
     if not CONFIG_PATH.exists():
         return {}
     try:
         with CONFIG_PATH.open(encoding="utf-8") as fh:
-            return json.load(fh)
+            return normalize_config_raw(json.load(fh))
     except ValueError:
         return {}
+
+
+# ---- firms (WP7a, 2026-09-18) ------------------------------------------------
+
+def normalize_config_raw(raw: dict) -> dict:
+    """Bring a config dict to the multi-firm shape.
+
+    v0.1.x wrote a single top-level `cif`/`base_dir`; that becomes one firm named
+    LEGACY_FIRM_NAME (its folder is kept as-is, or the plain default — never a new
+    subfolder, so an installed copy keeps filing where it did).
+    """
+    raw = dict(raw)
+    firms = raw.get("firms")
+    if not isinstance(firms, list):
+        firms = []
+        legacy_cif = normalize_cif(str(raw.get("cif", "")))
+        if legacy_cif:
+            firms.append({"id": f"firm-{legacy_cif}", "name": LEGACY_FIRM_NAME,
+                          "cif": legacy_cif,
+                          "base_dir": raw.get("base_dir") or str(DEFAULT_BASE_DIR)})
+    raw.pop("cif", None)
+    raw.pop("base_dir", None)
+    raw["firms"] = [f for f in firms if isinstance(f, dict) and f.get("id")]
+    ids = [f["id"] for f in raw["firms"]]
+    if raw.get("selected_firm") not in ids:
+        raw["selected_firm"] = ids[0] if ids else None
+    return raw
+
+
+def selected_firm(raw: dict) -> dict | None:
+    return next((f for f in raw.get("firms", []) if f["id"] == raw.get("selected_firm")), None)
+
+
+def find_firm(raw: dict, key: str) -> dict | None:
+    """By id first, then by CUI."""
+    key_cif = normalize_cif(key)
+    return next((f for f in raw.get("firms", []) if f["id"] == key), None) or \
+        next((f for f in raw.get("firms", []) if f["cif"] == key_cif), None)
+
+
+def firm_default_base_dir(name: str) -> str:
+    """Documents/Facturi e-Factura/<name>, with path separators removed from the name."""
+    clean = re.sub(r"[\\/:*?\"<>|]+", " ", name).strip() or "Firma"
+    clean = re.sub(r"\s+", " ", clean)
+    return str(DEFAULT_BASE_DIR / clean)
+
+
+def add_firm(raw: dict, name: str, cif: str, base_dir: str | None = None) -> dict:
+    import secrets as _secrets
+    raw.setdefault("firms", [])
+    firm = {"id": f"f{_secrets.token_hex(4)}", "name": name.strip(),
+            "cif": normalize_cif(cif), "base_dir": base_dir or firm_default_base_dir(name)}
+    raw["firms"].append(firm)
+    if not raw.get("selected_firm"):
+        raw["selected_firm"] = firm["id"]
+    return firm
+
+
+def select_firm(raw: dict, firm_id: str) -> None:
+    if not any(f["id"] == firm_id for f in raw.get("firms", [])):
+        raise ConfigError(f"No firm with id {firm_id!r}.", code="unknown_firm")
+    raw["selected_firm"] = firm_id
+
+
+def remove_firm(raw: dict, firm_id: str) -> None:
+    raw["firms"] = [f for f in raw.get("firms", []) if f["id"] != firm_id]
+    if raw.get("selected_firm") == firm_id:
+        raw["selected_firm"] = raw["firms"][0]["id"] if raw["firms"] else None
 
 
 def config_problem() -> str | None:
@@ -324,9 +412,9 @@ def _write_private(path: Path, text: str) -> None:
 
 
 def save_config(raw: dict) -> None:
-    """Atomically write config.json with owner-only permissions."""
+    """Atomically write config.json (multi-firm shape) with owner-only permissions."""
     ensure_config_dir()
-    _write_private(CONFIG_PATH, json.dumps(raw, indent=2, ensure_ascii=False))
+    _write_private(CONFIG_PATH, json.dumps(normalize_config_raw(raw), indent=2, ensure_ascii=False))
 
 
 def load_tokens() -> dict | None:
@@ -609,10 +697,12 @@ def connect_db() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     if str(DB_PATH) in _SCHEMA_READY:
         return conn
+    _migrate(conn)
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS invoices (
-            download_id   TEXT PRIMARY KEY,
+            firm_id       TEXT NOT NULL DEFAULT '',
+            download_id   TEXT NOT NULL,
             invoice_id    TEXT,
             supplier_name TEXT,
             supplier_cif  TEXT,
@@ -626,12 +716,14 @@ def connect_db() -> sqlite3.Connection:
             zip_path      TEXT,
             pdf_ok        INTEGER DEFAULT 1,
             note          TEXT,
-            downloaded_at TEXT
+            downloaded_at TEXT,
+            PRIMARY KEY (firm_id, download_id)
         );
-        CREATE INDEX IF NOT EXISTS idx_invoices_hash ON invoices(xml_sha256);
+        CREATE INDEX IF NOT EXISTS idx_invoices_hash ON invoices(firm_id, xml_sha256);
         CREATE INDEX IF NOT EXISTS idx_invoices_invid ON invoices(invoice_id);
 
         CREATE TABLE IF NOT EXISTS duplicates (
+            firm_id     TEXT NOT NULL DEFAULT '',
             download_id TEXT,
             invoice_id  TEXT,
             reason      TEXT,
@@ -646,9 +738,11 @@ def connect_db() -> sqlite3.Connection:
         -- Messages we decided not to keep (content duplicates): remembered so
         -- they are never downloaded again (review fix 2026-09-17).
         CREATE TABLE IF NOT EXISTS skipped (
-            download_id TEXT PRIMARY KEY,
+            firm_id     TEXT NOT NULL DEFAULT '',
+            download_id TEXT NOT NULL,
             reason      TEXT,
-            seen_at     TEXT
+            seen_at     TEXT,
+            PRIMARY KEY (firm_id, download_id)
         );
         """
     )
@@ -656,35 +750,108 @@ def connect_db() -> sqlite3.Connection:
         "INSERT INTO sync_state (key, value) VALUES ('schema_version', ?) "
         "ON CONFLICT(key) DO NOTHING", (str(SCHEMA_VERSION),))
     conn.commit()
+    _adopt_orphan_rows(conn)
     _SCHEMA_READY.add(str(DB_PATH))
     return conn
 
 
-def db_has_download(conn: sqlite3.Connection, download_id: str) -> bool:
-    """Already filed, or already examined and skipped — either way, don't fetch again."""
-    cur = conn.execute(
-        "SELECT 1 FROM invoices WHERE download_id = ? "
-        "UNION ALL SELECT 1 FROM skipped WHERE download_id = ?", (download_id, download_id))
-    return cur.fetchone() is not None
+def _table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
+    return [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
 
 
-def mark_skipped(conn: sqlite3.Connection, download_id: str, reason: str) -> None:
-    conn.execute("INSERT OR IGNORE INTO skipped (download_id, reason, seen_at) VALUES (?, ?, ?)",
-                 (download_id, reason, datetime.now().isoformat(timespec="seconds")))
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Schema 1 → 2: firm_id on every row, (firm_id, download_id) keys.
+
+    Idempotent: detected by the absence of `firm_id`, so a partially migrated or
+    already-migrated database is left alone. Rows get firm_id '' here; see
+    _adopt_orphan_rows for how they are attributed.
+    """
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "invoices" not in tables or "firm_id" in _table_columns(conn, "invoices"):
+        return
+    conn.executescript(
+        """
+        BEGIN;
+        CREATE TABLE invoices_v2 (
+            firm_id TEXT NOT NULL DEFAULT '', download_id TEXT NOT NULL, invoice_id TEXT,
+            supplier_name TEXT, supplier_cif TEXT, issue_date TEXT, message_date TEXT,
+            tip TEXT, doc_type TEXT, xml_sha256 TEXT, pdf_path TEXT, xml_path TEXT,
+            zip_path TEXT, pdf_ok INTEGER DEFAULT 1, note TEXT, downloaded_at TEXT,
+            PRIMARY KEY (firm_id, download_id));
+        INSERT INTO invoices_v2 (download_id, invoice_id, supplier_name, supplier_cif,
+            issue_date, message_date, tip, doc_type, xml_sha256, pdf_path, xml_path,
+            zip_path, pdf_ok, note, downloaded_at)
+          SELECT download_id, invoice_id, supplier_name, supplier_cif, issue_date,
+            message_date, tip, doc_type, xml_sha256, pdf_path, xml_path, zip_path,
+            pdf_ok, note, downloaded_at FROM invoices;
+        DROP TABLE invoices;
+        ALTER TABLE invoices_v2 RENAME TO invoices;
+        CREATE INDEX IF NOT EXISTS idx_invoices_hash ON invoices(firm_id, xml_sha256);
+        CREATE INDEX IF NOT EXISTS idx_invoices_invid ON invoices(invoice_id);
+        COMMIT;
+        """
+    )
+    if "skipped" in tables and "firm_id" not in _table_columns(conn, "skipped"):
+        conn.executescript(
+            """
+            BEGIN;
+            CREATE TABLE skipped_v2 (firm_id TEXT NOT NULL DEFAULT '', download_id TEXT NOT NULL,
+                reason TEXT, seen_at TEXT, PRIMARY KEY (firm_id, download_id));
+            INSERT INTO skipped_v2 (download_id, reason, seen_at)
+              SELECT download_id, reason, seen_at FROM skipped;
+            DROP TABLE skipped;
+            ALTER TABLE skipped_v2 RENAME TO skipped;
+            COMMIT;
+            """
+        )
+    if "duplicates" in tables and "firm_id" not in _table_columns(conn, "duplicates"):
+        conn.execute("ALTER TABLE duplicates ADD COLUMN firm_id TEXT NOT NULL DEFAULT ''")
+    conn.execute("INSERT INTO sync_state (key, value) VALUES ('schema_version', '2') "
+                 "ON CONFLICT(key) DO UPDATE SET value = '2'")
     conn.commit()
 
 
-def db_has_hash(conn: sqlite3.Connection, xml_sha256: str) -> bool:
-    cur = conn.execute("SELECT 1 FROM invoices WHERE xml_sha256 = ?", (xml_sha256,))
+def _adopt_orphan_rows(conn: sqlite3.Connection) -> None:
+    """Rows from before firms existed (firm_id '') belong to the only firm there is.
+    With several firms they stay unattributed rather than guessed."""
+    firms = read_config_raw().get("firms", [])
+    if len(firms) != 1:
+        return
+    fid = firms[0]["id"]
+    for table in ("invoices", "skipped", "duplicates"):
+        conn.execute(f"UPDATE {table} SET firm_id = ? WHERE firm_id = ''", (fid,))
+    conn.commit()
+
+
+def db_has_download(conn: sqlite3.Connection, firm_id: str, download_id: str) -> bool:
+    """Already filed, or already examined and skipped — either way, don't fetch again."""
+    cur = conn.execute(
+        "SELECT 1 FROM invoices WHERE firm_id = ? AND download_id = ? "
+        "UNION ALL SELECT 1 FROM skipped WHERE firm_id = ? AND download_id = ?",
+        (firm_id, download_id, firm_id, download_id))
     return cur.fetchone() is not None
 
 
-def log_duplicate(conn: sqlite3.Connection, download_id: str, invoice_id: str,
-                  reason: str) -> None:
+def mark_skipped(conn: sqlite3.Connection, firm_id: str, download_id: str, reason: str) -> None:
+    conn.execute("INSERT OR IGNORE INTO skipped (firm_id, download_id, reason, seen_at) "
+                 "VALUES (?, ?, ?, ?)",
+                 (firm_id, download_id, reason, datetime.now().isoformat(timespec="seconds")))
+    conn.commit()
+
+
+def db_has_hash(conn: sqlite3.Connection, firm_id: str, xml_sha256: str) -> bool:
+    cur = conn.execute("SELECT 1 FROM invoices WHERE firm_id = ? AND xml_sha256 = ?",
+                       (firm_id, xml_sha256))
+    return cur.fetchone() is not None
+
+
+def log_duplicate(conn: sqlite3.Connection, firm_id: str, download_id: str,
+                  invoice_id: str, reason: str) -> None:
     conn.execute(
-        "INSERT INTO duplicates (download_id, invoice_id, reason, seen_at) "
-        "VALUES (?, ?, ?, ?)",
-        (download_id, invoice_id, reason, datetime.now().isoformat(timespec="seconds")),
+        "INSERT INTO duplicates (firm_id, download_id, invoice_id, reason, seen_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (firm_id, download_id, invoice_id, reason,
+         datetime.now().isoformat(timespec="seconds")),
     )
     conn.commit()
 
@@ -704,40 +871,43 @@ def get_state(conn: sqlite3.Connection, key: str) -> str | None:
     return row["value"] if row else None
 
 
-def list_invoices(month: str | None = None, supplier: str | None = None) -> list[dict]:
-    """Invoices for the UI table, newest first. month = 'YYYY-MM', supplier = substring."""
+def list_invoices(firm_id: str, month: str | None = None,
+                  supplier: str | None = None) -> list[dict]:
+    """One firm's invoices for the UI table, newest first. month = 'YYYY-MM'."""
     conn = connect_db()
     try:
         rows = conn.execute(
             "SELECT download_id, invoice_id, supplier_name, supplier_cif, issue_date, "
             "doc_type, pdf_ok, pdf_path FROM invoices "
-            "WHERE (? = '' OR substr(issue_date, 1, 7) = ?) "
+            "WHERE firm_id = ? AND (? = '' OR substr(issue_date, 1, 7) = ?) "
             "AND (? = '' OR lower(supplier_name) LIKE ?) "
             "ORDER BY issue_date DESC, downloaded_at DESC",
-            (month or "", month or "", supplier or "", f"%{(supplier or '').lower()}%"),
+            (firm_id, month or "", month or "", supplier or "",
+             f"%{(supplier or '').lower()}%"),
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
 
 
-def invoice_months() -> list[str]:
+def invoice_months(firm_id: str) -> list[str]:
     conn = connect_db()
     try:
         rows = conn.execute(
             "SELECT DISTINCT substr(issue_date, 1, 7) AS m FROM invoices "
-            "WHERE issue_date IS NOT NULL ORDER BY m DESC"
+            "WHERE firm_id = ? AND issue_date IS NOT NULL ORDER BY m DESC", (firm_id,)
         ).fetchall()
         return [r["m"] for r in rows if r["m"]]
     finally:
         conn.close()
 
 
-def invoice_by_download_id(download_id: str) -> dict | None:
+def invoice_by_download_id(firm_id: str, download_id: str) -> dict | None:
     conn = connect_db()
     try:
         row = conn.execute(
-            "SELECT * FROM invoices WHERE download_id = ?", (download_id,)
+            "SELECT * FROM invoices WHERE firm_id = ? AND download_id = ?",
+            (firm_id, download_id)
         ).fetchone()
         return dict(row) if row else None
     finally:
@@ -957,6 +1127,7 @@ def sync(cfg: dict) -> Iterator[SyncEvent]:
     """
     base_dir = Path(cfg["base_dir"]).expanduser()
     base_dir.mkdir(parents=True, exist_ok=True)
+    firm_id = cfg.get("firm_id", "")
     conn = connect_db()
     try:
         yield SyncStarted(cfg["environment"], cfg["cif"], LOOKBACK_DAYS)
@@ -991,9 +1162,9 @@ def sync(cfg: dict) -> Iterator[SyncEvent]:
             # Only inbound invoices (skip buyer messages / error notifications).
             if tip and tip not in ("FACTURA", "FACTURA PRIMITA"):
                 continue
-            if db_has_download(conn, download_id):
+            if db_has_download(conn, firm_id, download_id):
                 reason = "already downloaded (download_id)"
-                log_duplicate(conn, download_id, "", reason)
+                log_duplicate(conn, firm_id, download_id, "", reason)
                 dup_count += 1
                 yield Duplicate(download_id, reason)
                 continue
@@ -1004,10 +1175,10 @@ def sync(cfg: dict) -> Iterator[SyncEvent]:
 
                 xml_name, xml_bytes = select_invoice_xml(zip_bytes)
                 content_hash = hashlib.sha256(xml_bytes).hexdigest()
-                if db_has_hash(conn, content_hash):
+                if db_has_hash(conn, firm_id, content_hash):
                     reason = "duplicate content (xml hash)"
-                    log_duplicate(conn, download_id, "", reason)
-                    mark_skipped(conn, download_id, reason)
+                    log_duplicate(conn, firm_id, download_id, "", reason)
+                    mark_skipped(conn, firm_id, download_id, reason)
                     dup_count += 1
                     yield Duplicate(download_id, reason)
                     continue
@@ -1045,11 +1216,11 @@ def sync(cfg: dict) -> Iterator[SyncEvent]:
                 now_iso = datetime.now().isoformat(timespec="seconds")
                 conn.execute(
                     """INSERT INTO invoices
-                       (download_id, invoice_id, supplier_name, supplier_cif, issue_date,
+                       (firm_id, download_id, invoice_id, supplier_name, supplier_cif, issue_date,
                         message_date, tip, doc_type, xml_sha256, pdf_path, xml_path,
                         zip_path, pdf_ok, note, downloaded_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (download_id, meta["invoice_id"], meta["supplier_name"],
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (firm_id, download_id, meta["invoice_id"], meta["supplier_name"],
                      meta["supplier_cif"], meta["issue_date"], message_date, tip,
                      meta["doc_type"], content_hash,
                      str(pdf_path) if pdf_ok else "", str(xml_path), str(zip_path),
@@ -1083,7 +1254,7 @@ def sync(cfg: dict) -> Iterator[SyncEvent]:
                 error_count += 1
                 yield SyncError(download_id, str(exc), error_code(exc))
 
-        set_state(conn, "last_run", datetime.now().isoformat(timespec="seconds"))
+        set_state(conn, f"last_run:{firm_id}", datetime.now().isoformat(timespec="seconds"))
         yield SyncFinished(new_count, dup_count, pdf_failed, error_count, str(base_dir))
     finally:
         conn.close()
@@ -1116,24 +1287,29 @@ class StatusReport:
 
 
 def status_report(cfg: dict, recent_limit: int = 10) -> StatusReport:
+    fid = cfg.get("firm_id", "")
     conn = connect_db()
     try:
-        total = conn.execute("SELECT COUNT(*) AS c FROM invoices").fetchone()["c"]
+        total = conn.execute("SELECT COUNT(*) AS c FROM invoices WHERE firm_id = ?",
+                             (fid,)).fetchone()["c"]
         this_month = conn.execute(
-            "SELECT COUNT(*) AS c FROM invoices WHERE substr(issue_date,1,7) = ?",
-            (datetime.now().strftime("%Y-%m"),),
+            "SELECT COUNT(*) AS c FROM invoices WHERE firm_id = ? AND substr(issue_date,1,7) = ?",
+            (fid, datetime.now().strftime("%Y-%m")),
         ).fetchone()["c"]
-        dup_total = conn.execute("SELECT COUNT(*) AS c FROM duplicates").fetchone()["c"]
+        dup_total = conn.execute("SELECT COUNT(*) AS c FROM duplicates WHERE firm_id = ?",
+                                 (fid,)).fetchone()["c"]
         pdf_failed = conn.execute(
-            "SELECT COUNT(*) AS c FROM invoices WHERE pdf_ok = 0"
+            "SELECT COUNT(*) AS c FROM invoices WHERE firm_id = ? AND pdf_ok = 0", (fid,)
         ).fetchone()["c"]
         rows = conn.execute(
             "SELECT invoice_id, supplier_name, issue_date, pdf_ok "
-            "FROM invoices ORDER BY downloaded_at DESC LIMIT ?", (recent_limit,)
+            "FROM invoices WHERE firm_id = ? ORDER BY downloaded_at DESC LIMIT ?",
+            (fid, recent_limit)
         ).fetchall()
         recent = [RecentInvoice(r["invoice_id"], r["supplier_name"], r["issue_date"],
                                 bool(r["pdf_ok"])) for r in rows]
-        last_run = get_state(conn, "last_run")
+        # per-firm key; the pre-firm value is honoured for the migrated firm
+        last_run = get_state(conn, f"last_run:{fid}") or get_state(conn, "last_run")
     finally:
         conn.close()
     return StatusReport(

@@ -223,18 +223,19 @@ def test_db_dedup_by_download_id_and_hash(tmp_path, monkeypatch):
     conn = ai.connect_db()
     content_hash = hashlib.sha256(SAMPLE_INVOICE).hexdigest()
     conn.execute(
-        "INSERT INTO invoices (download_id, invoice_id, xml_sha256) VALUES (?,?,?)",
-        ("1001", "FAC-2026-001", content_hash),
+        "INSERT INTO invoices (firm_id, download_id, invoice_id, xml_sha256) VALUES (?,?,?,?)",
+        ("f1", "1001", "FAC-2026-001", content_hash),
     )
     conn.commit()
 
-    assert ai.db_has_download(conn, "1001") is True
-    assert ai.db_has_download(conn, "9999") is False
-    assert ai.db_has_hash(conn, content_hash) is True
-    assert ai.db_has_hash(conn, "deadbeef") is False
+    assert ai.db_has_download(conn, "f1", "1001") is True
+    assert ai.db_has_download(conn, "f1", "9999") is False
+    assert ai.db_has_download(conn, "f2", "1001") is False       # per firm
+    assert ai.db_has_hash(conn, "f1", content_hash) is True
+    assert ai.db_has_hash(conn, "f1", "deadbeef") is False
 
     # Duplicate logging.
-    ai.log_duplicate(conn, "1001", "FAC-2026-001", "already downloaded")
+    ai.log_duplicate(conn, "f1", "1001", "FAC-2026-001", "already downloaded")
     n = conn.execute("SELECT COUNT(*) FROM duplicates").fetchone()[0]
     assert n == 1
 

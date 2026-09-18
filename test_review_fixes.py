@@ -296,7 +296,7 @@ def test_schema_version_recorded_and_ddl_once_per_process(tmp_path, monkeypatch)
     monkeypatch.setattr(core, "DB_PATH", tmp_path / "a.db")
     core._SCHEMA_READY.clear()
     core.connect_db().close()
-    assert core.get_state(core.connect_db(), "schema_version") == "1"
+    assert core.get_state(core.connect_db(), "schema_version") == str(core.SCHEMA_VERSION)
     assert str(tmp_path / "a.db") in core._SCHEMA_READY
 
 
@@ -581,7 +581,7 @@ def test_log_lines_read_naturally(harness):
 def test_dates_are_shown_the_romanian_way(harness):
     harness.write_cfg()
     harness.synced()
-    core.set_state(core.connect_db(), "last_run", "2026-09-17T14:33:02")
+    core.set_state(core.connect_db(), f"last_run:{core.load_config()['firm_id']}", "2026-09-17T14:33:02")
     core.save_tokens({"access_token": "a", "refresh_token": "r", "expires_at": 1797163200})  # 2026-12-13 12:00 UTC
     home = harness.client.get("/").get_data(as_text=True)
     assert "17.09.2026, 14:33" in home and "2026-09-17T14" not in home

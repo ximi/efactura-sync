@@ -310,9 +310,9 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
             tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-30:]
             lines += ["", "ui.log (last 30 lines):"] + [f"  {_redact(l)}" for l in tail]
         text = "\n".join(lines) + "\n"
-        cif = core.normalize_cif(str(raw.get("cif", "")))
-        if cif:
-            text = text.replace(cif, "[cui]")       # company id stays on the machine
+        for firm in raw.get("firms", []):           # company ids stay on the machine
+            if firm.get("cif"):
+                text = text.replace(firm["cif"], "[cui]")
         return Response(text, mimetype="text/plain")
 
     @app.get("/favicon.svg")
@@ -333,10 +333,13 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
         return fmt_date(datetime.fromtimestamp(ts)) if ts else ""
 
     def form_ctx(errors=None, next_url=None, values=None) -> dict:
+        stored = core.read_config_raw()
+        firm = core.selected_firm(stored) or {}
         raw = {"environment": core.DEFAULT_ENVIRONMENT,
                "redirect_uri": core.DEFAULT_REDIRECT_URI,
                "base_dir": str(core.DEFAULT_BASE_DIR),
-               **core.read_config_raw()}
+               **stored, "cif": firm.get("cif", ""),
+               "base_dir": firm.get("base_dir") or str(core.DEFAULT_BASE_DIR)}
         if values:
             raw = {**raw, **values}
         return {"raw": raw, "errors": errors or {}, "next_url": next_url,
@@ -407,14 +410,17 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
             return resp
         month = request.args.get("luna", "").strip()
         supplier = request.args.get("furnizor", "").strip()
-        rows = core.list_invoices(month or None, supplier or None)
-        return render_template("invoices.html", rows=rows, months=core.invoice_months(),
+        rows = core.list_invoices(cfg["firm_id"], month or None, supplier or None)
+        return render_template("invoices.html", rows=rows, months=core.invoice_months(cfg["firm_id"]),
                                month=month, supplier=supplier,
                                base_dir=str(Path(cfg["base_dir"]).expanduser()))
 
     @app.get("/pdf/<download_id>")
     def pdf(download_id):
-        row = core.invoice_by_download_id(download_id)
+        cfg, resp = load_cfg_or_redirect()
+        if resp:
+            return resp
+        row = core.invoice_by_download_id(cfg["firm_id"], download_id)
         if not row or not row.get("pdf_path") or not Path(row["pdf_path"]).is_file():
             abort(404, description="err_pdf_missing")
         return send_file(row["pdf_path"], mimetype="application/pdf")
@@ -502,7 +508,13 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
             return render_settings(400, errors=errors, values=values)
 
         raw = core.read_config_raw()
+        firm_values = {"cif": values.pop("cif"), "base_dir": values.pop("base_dir")}
         raw.update(values)
+        firm = core.selected_firm(raw)
+        if firm:                                     # WP7a: the form edits the selected firm
+            firm.update(firm_values)
+        else:
+            core.add_firm(raw, core.LEGACY_FIRM_NAME, firm_values["cif"], firm_values["base_dir"])
         secret = form.get("client_secret", "")
         if secret:                                   # blank keeps the stored secret
             raw["client_secret"] = secret

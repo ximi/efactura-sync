@@ -97,6 +97,39 @@ Dates are when the decision was made.
 - Verified live on macOS: Quit exits the process (code 0); idle exit fires on the
   next watchdog tick and the port is released. Windows: still unverified by a human.
 
+## WP7 — Multiple firms (decided 2026-09-18: firm switcher, everything per firm)
+
+Model: the app always operates on ONE selected firm. Home, Facturi, Setări and
+Sincronizează act on the selected firm only; the header gets a firm switcher.
+No cross-firm views, no "sync all". ANAF's token belongs to the person (the
+certificate holder), the firm is the `cif` parameter on every call, so one login
+can serve many firms if the certificate has SPV rights for each (the accountant
+model, "împuternicit"); a firm whose calls fail with "no right in SPV" is an SPV
+enrolment problem, shown as such.
+
+Work packages (each check-green; schema change → first real migration):
+
+- **WP7a — data model + migration.** `config.json`: `firms: [{id, name, cif,
+  base_dir}]` + `selected_firm`; tokens shared (decision pending: per-firm override).
+  DB: `firm_id` column on `invoices`/`skipped`/`duplicates`, `(firm_id, download_id)`
+  keys, `schema_version` 1→2 migration that assigns existing rows to the firm
+  created from the old single `cif`; idempotent, tested against a v1-shaped DB.
+  `core.load_config()` returns the selected firm's effective config so the engine
+  is unchanged (`cif`, `base_dir` come from the firm).
+- **WP7b — engine + CLI.** `sync(cfg)` unchanged in shape; events unchanged; CSV
+  per firm folder. CLI: `--firm <id|cif>` for `sync`/`status`; default = selected.
+- **WP7c — UI.** Header switcher (select, POST, persists `selected_firm`); Setări
+  becomes per firm (name, CUI, folder) + a firm list with add/remove; wizard step 2
+  creates the first firm; Home/Facturi read the selected firm; the empty-selection
+  state points to Setări. Folder default `Documents/Facturi e-Factura/<Nume firmă>`.
+- **WP7d — tests + live drive**: migration from a real v0.1.x DB copy, switcher
+  round-trip, per-firm dedup (same download_id under two firms is two rows), SPV
+  "no right" error mapped to a firm-specific message.
+
+Risks: the migration is the first schema change on installed copies (v0.1.x DBs);
+ANAF's per-CIF behaviour is still unverified live; a per-firm token override adds
+a second auth state to explain in the UI.
+
 ## WP6 — Code signing (parked 2026-09-18)
 
 Decision 2026-09-18: stay unsigned for now. SignPath Foundation requires "a certain
