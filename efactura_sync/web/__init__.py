@@ -27,9 +27,11 @@ from urllib.parse import urlparse, urlsplit
 
 from flask import (Flask, Response, abort, flash, redirect, render_template, request,
                    send_file, url_for)
+from werkzeug.exceptions import HTTPException
 
 from .. import __version__, core
-from .errors import describe, render_event, technical_detail
+from .errors import (describe, describe_more, fmt_date, fmt_datetime, fmt_month,
+                     render_event, technical_detail)
 from .strings import LANGUAGES, translator
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -187,6 +189,9 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
     app.config["CSRF_TOKEN"] = secrets.token_urlsafe(32)
     app.runner = SyncRunner()
     app.pending_auth = None
+    app.last_auth_code = None          # opens "advanced" when the callback URL is at fault
+    app.jinja_env.filters["fmt_date"] = fmt_date
+    app.jinja_env.filters["fmt_datetime"] = fmt_datetime
     app.open_path = open_path or open_path_default
     app.pick_folder = pick_folder or pick_folder_default
     app.shutdown_hook = shutdown or (lambda: None)
@@ -202,16 +207,23 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
         fetch_site = request.headers.get("Sec-Fetch-Site", "same-origin")
         if request.path != "/ping" and fetch_site in ("same-origin", "none"):
             app.last_activity = time.time()
-        if (urlsplit("//" + request.host).hostname or "") not in LOCAL_HOSTS:
+        def refuse(reason: str):
+            # Why a request was refused is the one thing support needs; nothing
+            # here is secret (no token values, no form data).
+            log.warning("refused %s %s: %s", request.method, request.path, reason)
             abort(403)
+
+        if (urlsplit("//" + request.host).hostname or "") not in LOCAL_HOSTS:
+            refuse(f"host {request.host!r} not local")
         if request.method == "POST":
             origin = request.headers.get("Origin")
             if origin and (urlparse(origin).hostname or "") not in LOCAL_HOSTS:
-                abort(403)
+                refuse(f"origin {origin!r} not local")
             # Compare bytes: compare_digest rejects non-ASCII str with a TypeError (500).
             if not secrets.compare_digest(request.form.get("csrf", "").encode("utf-8"),
                                           app.config["CSRF_TOKEN"].encode("utf-8")):
-                abort(403)
+                refuse("csrf token missing or stale" if request.form.get("csrf")
+                       else f"no csrf field (content-type {request.content_type!r})")
 
     @app.after_request
     def harden(resp):
@@ -220,7 +232,10 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
         resp.headers["X-Content-Type-Options"] = "nosniff"
-        resp.headers["Referrer-Policy"] = "no-referrer"
+        # same-origin, NOT no-referrer: with no-referrer Chromium sends `Origin: null`
+        # on same-origin form POSTs, which the Origin guard rightly refuses — every
+        # button 403'd. Found live 2026-09-18; the test client cannot see this.
+        resp.headers["Referrer-Policy"] = "same-origin"
         return resp
 
     # ---- helpers --------------------------------------------------------- #
@@ -235,18 +250,44 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
     @app.context_processor
     def inject():
         current = lang()
-        return {"t": translator(current), "lang": current,
+        tr = translator(current)
+        return {"t": tr, "lang": current, "fmt_month": lambda v: fmt_month(v, tr),
                 "csrf": app.config["CSRF_TOKEN"], "version": __version__,
                 "running": app.runner.running}
+
+    # ---- error pages: never Werkzeug's English boilerplate ------------------ #
+
+    ERROR_KEYS = {400: "err_bad_request", 403: "err_page_expired", 404: "err_not_found",
+                  500: "err_server"}
+
+    @app.errorhandler(HTTPException)
+    def http_error(exc):
+        tr = t()
+        desc = exc.description if isinstance(exc.description, str) else ""
+        key = desc if tr.has(desc) else ERROR_KEYS.get(exc.code, "err_server")
+        return render_template("error.html", message=tr(key), code=exc.code), exc.code
+
+    @app.errorhandler(Exception)
+    def any_error(exc):
+        log.exception("unhandled error")
+        return render_template("error.html", message=t()("err_server"), code=500), 500
+
+    @app.get("/favicon.svg")
+    def favicon():
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+               '<rect width="32" height="32" rx="7" fill="#1d5fd1"/>'
+               '<path d="M9 8h14v3H9zm0 6h14v3H9zm0 6h9v3H9z" fill="#fff"/></svg>')
+        return Response(svg, mimetype="image/svg+xml")
 
     def load_cfg_or_redirect():
         try:
             return core.load_config(), None
         except core.ConfigError:
+            flash(t()("config_needed"), "info")
             return None, redirect(url_for("start"))
 
     def fmt_ts(ts) -> str:
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d") if ts else ""
+        return fmt_date(datetime.fromtimestamp(ts)) if ts else ""
 
     def form_ctx(errors=None, next_url=None, values=None) -> dict:
         raw = {"environment": core.DEFAULT_ENVIRONMENT,
@@ -258,25 +299,29 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
         return {"raw": raw, "errors": errors or {}, "next_url": next_url,
                 "environments": list(core.REST_BASE),
                 "secret_set": bool(core.read_config_raw().get("client_secret")),
-                "config_problem": core.config_problem()}
+                "config_problem": core.config_problem(),
+                "adv_open": app.last_auth_code in ("oauth_invalid_request", "oauth_invalid_client")}
 
-    def auth_ctx(auth_exc: core.ConfigError | None = None, wizard=False) -> dict:
+    def auth_ctx(auth_exc: core.ConfigError | None = None, wizard=False, auth_text=None) -> dict:
         tok = core.token_status()
+        tr = t()
         return {"auth": tok, "auth_expires": fmt_ts(tok["expires_at"]),
                 "pending": app.pending_auth, "wizard": wizard,
-                "auth_error": describe(auth_exc.code, t()) if auth_exc else None,
+                "auth_error": auth_text or (describe(auth_exc.code, tr) if auth_exc else None),
+                "auth_more": describe_more(auth_exc.code, tr) if auth_exc else None,
                 "auth_detail": technical_detail(str(auth_exc)) if auth_exc else None}
 
-    def render_settings(status=200, auth_exc=None, errors=None, values=None):
+    def render_settings(status=200, auth_exc=None, errors=None, values=None, auth_text=None):
         return render_template("settings.html", **form_ctx(errors, None, values),
-                               **auth_ctx(auth_exc)), status
+                               **auth_ctx(auth_exc, auth_text=auth_text)), status
 
-    def render_wizard(step: int, status=200, auth_exc=None, errors=None, values=None):
+    def render_wizard(step: int, status=200, auth_exc=None, errors=None, values=None,
+                      auth_text=None):
         ctx = {"step": step}
         if step == 2:
             ctx.update(form_ctx(errors, url_for("start", step=3), values))
         if step == 3:
-            ctx.update(auth_ctx(auth_exc, wizard=True))
+            ctx.update(auth_ctx(auth_exc, wizard=True, auth_text=auth_text))
         return render_template("start.html", **ctx), status
 
     # ---- pages ----------------------------------------------------------- #
@@ -293,8 +338,13 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
             return resp
         report = core.status_report(cfg)
         tr = t()
-        lines = [render_event(e, tr) for e in app.runner.events]
-        return render_template("home.html", report=report, lines=lines)
+        events = app.runner.events
+        lines = [line for line in (render_event(e, tr) for e in events) if line]
+        last_error = next((render_event(e, tr) for e in reversed(events)
+                           if e.get("type") == "SyncError"), None)
+        return render_template("home.html", report=report, lines=lines,
+                               auth=core.token_status(),
+                               last_error=None if app.runner.running else last_error)
 
     @app.get("/start")
     def start():
@@ -303,6 +353,7 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
             try:
                 core.load_config()
             except core.ConfigError:
+                flash(t()("config_needed"), "info")
                 return redirect(url_for("start", step=2))
         return render_wizard(step if step in (1, 2, 3) else 1)
 
@@ -322,7 +373,7 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
     def pdf(download_id):
         row = core.invoice_by_download_id(download_id)
         if not row or not row.get("pdf_path") or not Path(row["pdf_path"]).is_file():
-            abort(404)
+            abort(404, description="err_pdf_missing")
         return send_file(row["pdf_path"], mimetype="application/pdf")
 
     @app.get("/setari")
@@ -337,7 +388,7 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
         if resp:
             return resp
         if not app.runner.start(cfg):
-            return t()("sync_busy"), 409
+            flash(t()("sync_busy"), "info")   # a double-click, not an error page
         return redirect(url_for("home"), code=303)
 
     @app.get("/sync/events")
@@ -398,6 +449,8 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
             errors["cif"] = tr("val_required")
         elif not values["cif"].isdigit():
             errors["cif"] = tr("val_cif_digits")
+        if not form.get("client_secret") and not core.read_config_raw().get("client_secret"):
+            errors["client_secret"] = tr("val_required")
         if values["environment"] not in core.REST_BASE:
             errors["environment"] = tr("val_environment")
         if errors:
@@ -439,16 +492,22 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
         cfg, resp = load_cfg_or_redirect()
         if resp:
             return resp
-        if app.pending_auth is None:
-            abort(400)
         wizard = bool(request.form.get("wizard"))
+        if app.pending_auth is None:
+            text = t()("auth_not_pending")
+            return (render_wizard(3, 400, auth_text=text) if wizard
+                    else render_settings(400, auth_text=text))
         try:
             core.complete_auth(cfg, app.pending_auth, request.form.get("pasted", ""))
         except core.ConfigError as exc:
+            app.last_auth_code = exc.code
+            if exc.code in ("state_mismatch", "no_code"):
+                app.pending_auth = None        # a fresh state/URL pair on "start over"
             if wizard:
                 return render_wizard(3, auth_exc=exc)
             return render_settings(auth_exc=exc)
         app.pending_auth = None
+        app.last_auth_code = None
         flash(t()("wiz_done" if wizard else "auth_ok"), "ok")
         return redirect(url_for("home") if wizard else url_for("settings"), code=303)
 

@@ -12,7 +12,7 @@
       <li>{{ t('wiz_need_app') }}
         <ol type="a">
           <li>{{ t('wiz_app_1') }}<br>
-            <a href="https://www.anaf.ro/anaf/internet/ANAF/servicii_online/inreg_api" target="_blank" rel="noopener">anaf.ro → Înregistrare API</a></li>
+            <a href="https://www.anaf.ro/anaf/internet/ANAF/servicii_online/inreg_api" target="_blank" rel="noopener">{{ t('anaf_api_link') }}</a> <span class="muted">{{ t('new_tab') }}</span></li>
           <li>{{ t('wiz_app_2') }}</li>
           <li>{{ t('wiz_app_3') }}</li>
           <li>{{ t('wiz_app_4') }}</li>
@@ -25,9 +25,11 @@
 {% elif step == 2 %}
   <p>{{ t('wiz_step2_intro') }}</p>
   {% include "_settings_form.html" %}
+  <p style="margin-top: 12px;"><a href="{{ url_for('start', step=1) }}">{{ t('wiz_back') }}</a></p>
 
 {% else %}
   <p>{{ t('wiz_step3_intro') }}</p>
   {% include "_auth.html" %}
+  <p style="margin-top: 12px;"><a href="{{ url_for('start', step=2) }}">{{ t('wiz_back') }}</a></p>
 {% endif %}
 {% endblock %}

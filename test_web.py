@@ -115,7 +115,7 @@ def test_notice_is_localized(harness):
     harness.app.runner.engine = _engine_with(
         core.Notice("Paginated listing unavailable (x); using legacy endpoint.", "legacy_listing"))
     ev = [e for e in harness.synced() if e["type"] == "Notice"][0]
-    assert "legacy endpoint" not in ev["text"] and "Listarea paginată" in ev["text"]
+    assert ev["text"] == ""                       # internal notice: kept in events, hidden from users
 
 
 def test_settings_validation_errors_are_friendly(harness):
@@ -251,7 +251,9 @@ def test_second_sync_start_while_running_is_refused(harness, monkeypatch):
 
     harness.app.runner.engine = slow_engine
     assert harness.post("/sync").status_code == 303
-    assert harness.post("/sync").status_code == 409
+    r = harness.post("/sync")                       # double-click: flash, not a bare page
+    assert r.status_code == 303
+    assert "deja în curs" in harness.client.get("/").get_data(as_text=True)
     gate.set()
     assert harness.app.runner.wait(5)
 
@@ -454,7 +456,7 @@ def test_invoice_table_has_no_type_column_but_flags_credit_notes(harness):
     harness.synced()                                  # one invoice + one credit note
     html = harness.client.get("/facturi").get_data(as_text=True)
     assert "<th>Tip</th>" not in html
-    assert html.count('class="badge"') == 1 and "notă de credit" in html
+    assert html.count('class="badge"') == 1 and ">storno<" in html
     assert "factură</" not in html                    # no per-row "invoice" noise
 
 
@@ -462,7 +464,7 @@ def test_invoice_dates_do_not_wrap(harness):
     harness.write_cfg()
     harness.synced()
     html = harness.client.get("/facturi").get_data(as_text=True)
-    assert '<td class="nowrap">2026-03-14</td>' in html
+    assert '<td class="nowrap">14.03.2026</td>' in html      # Romanian date format (decision 2026-09-17)
     assert html.count('<td class="nowrap">') == 3 * 2          # date, invoice, action × 2 rows
 
 
@@ -479,4 +481,4 @@ def test_supplier_cif_is_on_its_own_line(harness):
     harness.write_cfg()
     harness.synced()
     html = harness.client.get("/facturi").get_data(as_text=True)
-    assert 'Furnizor Demo SRL<div class="muted cif">RO87654321</div>' in html
+    assert 'Furnizor Demo SRL<div class="muted cif">CUI RO87654321</div>' in html

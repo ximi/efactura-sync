@@ -86,6 +86,19 @@ Dates are when the decision was made.
 - Verify Quit + idle exit on both OS. Log file in the config dir. "Copy diagnostic
   info" button (versions, OS, last error — never secrets).
 
+## WP6 — Code signing (decided 2026-09-18; no cost until the route is chosen)
+
+- Windows: 1) check Azure Trusted Signing eligibility (country + identity validation;
+  ~€10/month, cloud HSM, official GitHub Action); 2) fallback SignPath Foundation
+  (free for OSS, approval process); 3) OV/EV certificates only if a company wants
+  day-one SmartScreen trust (hardware key → needs paid cloud signing for CI).
+  Pipeline: `signtool sign /fd SHA256 /tr <tsa> /td SHA256` on the .exe after
+  PyInstaller, credentials as repo secrets. The certSIGN qualified certificate is a
+  personal e-signature cert and cannot sign code.
+- macOS: Apple Developer (~€99/yr) → Developer ID signing + notarization in CI
+  (`codesign`, `notarytool`), replaces the right-click → Open step.
+- Signing reduces, not eliminates, antivirus false positives on one-file bundles.
+
 ## Risks to accept before starting
 
 1. **Unsigned binaries.** Scary first-run dialogs; some managed Windows machines block
@@ -114,13 +127,31 @@ Dates are when the decision was made.
   coherent; open-folder creates the folder; quit refused mid-sync; frozen logging
   for all commands; quiet folder pickers.
 - Batch B (security hardening) done: X-Frame-Options/CSP frame-ancestors, nosniff,
-  no-referrer; `_safe_next` allows only `/path?query` (no backslash/CRLF); a pasted
+  Referrer-Policy (now same-origin, see below); `_safe_next` allows only `/path?query` (no backslash/CRLF); a pasted
   callback must carry our `state` (bare codes still PKCE-bound); `/ping` and
   cross-site GETs no longer keep the server alive; config/tokens created O_EXCL 0600;
   technical detail capped; workflows least-privilege (write only in the release
   job), third-party action SHA-pinned, tag must equal `__version__`; app hidden
   from the Dock (LSUIElement).
-- Batch C (UX) pending — see the review list.
+- Batch C (UX) done: restart after an auth error; wizard explains a missing secret
+  and the step-3 bounce; Home shows an unauthenticated banner and the last sync
+  error; localized 400/403/404/500 pages; double-click sync → flash; Bye page
+  without navigation; Romanian number agreement in log lines; environment code
+  hidden in production; dates as dd.mm.yyyy; filtered empty state + month names;
+  „CUI (cod fiscal)”, „storno” badge, „fără PDF” vocabulary with an explanation;
+  concise access_denied help with details; accessibility (color-scheme, aria-current,
+  log role/tabindex/live, PDF link names, lang-toggle label, flash status, form
+  error linkage, 3:1 control borders, readable disabled button); narrow-width
+  layout (header wrap, table scroll, code wrap); wizard back links; favicon; footer
+  explains the local app.
+- Found live after Batch B (2026-09-18): `Referrer-Policy: no-referrer` made Chromium
+  send `Origin: null` on same-origin form POSTs, so the Origin guard 403'd every
+  button. Now `same-origin`; the guard logs the refusal reason (never the token).
+  Lesson recorded: header/CSRF changes need a real-browser click, the test client
+  cannot see them.
+- Not done from the UX list (small, later): localized native picker prompt on
+  macOS/Windows; "Copiază adresa" button for the ANAF URL; PDF-retry for invoices
+  without PDF.
 
 ## Deferred (from the 2026-09-17 security review)
 

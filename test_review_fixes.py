@@ -398,7 +398,8 @@ def test_pages_refuse_framing_and_sniffing(harness):
         assert h.get("X-Frame-Options") == "DENY", path
         assert "frame-ancestors 'none'" in h.get("Content-Security-Policy", ""), path
         assert h.get("X-Content-Type-Options") == "nosniff", path
-        assert h.get("Referrer-Policy") == "no-referrer", path
+        # never "no-referrer": Chromium then sends Origin: null on form POSTs (2026-09-18)
+        assert h.get("Referrer-Policy") == "same-origin", path
 
 
 def test_safe_next_rejects_backslash_and_scheme_tricks():
@@ -485,3 +486,172 @@ def test_workflows_follow_least_privilege_and_pin_third_party_actions():
 def test_app_bundle_hides_from_dock():
     spec = Path("efactura_sync.spec").read_text(encoding="utf-8")
     assert '"LSUIElement": True' in spec
+
+
+# =========================================================================== #
+# Batch C — UX (2026-09-17 review). Decisions: CUI label, "storno" badge.
+# =========================================================================== #
+
+def _auth_fail(harness, err="access_denied"):
+    harness.post("/auth/begin")
+    pending = harness.app.pending_auth
+    return harness.post("/auth/complete",
+                        pasted=f"https://localhost/callback?error={err}&state={pending.state}")
+
+
+def test_auth_error_offers_a_restart(harness):
+    harness.write_cfg()
+    html = _auth_fail(harness).get_data(as_text=True)
+    assert "Reia autentificarea" in html and 'action="/auth/begin"' in html
+
+
+def test_state_mismatch_regenerates_the_pending_auth(harness):
+    harness.write_cfg()
+    harness.post("/auth/begin")
+    old = harness.app.pending_auth
+    harness.post("/auth/complete", pasted="https://localhost/callback?code=X&state=WRONG")
+    assert harness.app.pending_auth is None or harness.app.pending_auth.state != old.state
+
+
+def test_callback_error_opens_advanced_settings(harness):
+    harness.write_cfg()
+    html = _auth_fail(harness, "invalid_request").get_data(as_text=True)
+    assert "<details" in html and "open" in html.split("<details", 1)[1].split(">", 1)[0]
+
+
+def test_wizard_explains_missing_secret_instead_of_looping(harness):
+    r = harness.post("/setari", client_id="", client_secret="s", cif="1", environment="prod",
+                     redirect_uri="x", base_dir=str(harness.tmp / "inv"), next="/start?step=3")
+    html = r.get_data(as_text=True)
+    assert r.status_code == 400 and "Reintrodu Client secret" in html
+    r = harness.post("/setari", client_id="cid", client_secret="", cif="1", environment="prod",
+                     redirect_uri="x", base_dir=str(harness.tmp / "inv"), next="/start?step=3")
+    assert r.status_code == 400                     # no stored secret + blank = error
+
+
+def test_step3_without_config_explains_the_bounce(harness):
+    r = harness.client.get("/start?step=3", follow_redirects=True)
+    assert "Completează setările" in r.get_data(as_text=True)
+
+
+def test_home_shows_auth_and_last_error_banners(harness):
+    harness.write_cfg()
+    html = harness.client.get("/").get_data(as_text=True)
+    assert "Nu ești autentificat la ANAF" in html and 'href="/setari"' in html
+    core.save_tokens({"access_token": "a", "refresh_token": "r", "expires_at": 4102444800})
+    assert "Nu ești autentificat" not in harness.client.get("/").get_data(as_text=True)
+    harness.app.runner.engine = lambda cfg: iter([core.SyncStarted("test", "1", 60),
+                                                  core.SyncError("", "x", "network"),
+                                                  core.SyncFinished(0, 0, 0, 1, "x")])
+    harness.synced()
+    html = harness.client.get("/").get_data(as_text=True)
+    assert "Nu s-a putut contacta ANAF" in html.split('class="log"')[0]   # banner, not just a log line
+
+
+def test_error_pages_are_localized_and_styled(harness):
+    harness.write_cfg()
+    r = harness.client.get("/pdf/nope")
+    assert r.status_code == 404 and "Fișierul PDF" in r.get_data(as_text=True)
+    r = harness.client.post("/sync", data={"csrf": "stale"})
+    html = r.get_data(as_text=True)
+    assert r.status_code == 403 and "Pagina a expirat" in html and "Facturi" in html
+    r = harness.post("/auth/complete", pasted="x")           # no pending auth
+    assert r.status_code == 400 and "nu mai este în curs" in r.get_data(as_text=True)
+
+
+def test_bye_page_has_no_navigation(harness):
+    harness.write_cfg()
+    html = harness.post("/iesire").get_data(as_text=True)
+    assert 'href="/facturi"' not in html and "fila" in html
+
+
+def test_log_lines_read_naturally(harness):
+    from efactura_sync.web.strings import translator
+    t = translator("ro")
+    assert "60 de zile" in weberrors.render_event({"type": "SyncStarted", "environment": "prod", "cif": "1", "lookback_days": 60}, t)
+    assert "prod" not in weberrors.render_event({"type": "SyncStarted", "environment": "prod", "cif": "1", "lookback_days": 60}, t)
+    assert "test" in weberrors.render_event({"type": "SyncStarted", "environment": "test", "cif": "1", "lookback_days": 60}, t).lower()
+    assert weberrors.render_event({"type": "SyncFinished", "new": 0, "duplicates": 3, "pdf_failed": 0, "errors": 0, "base_dir": ""}, t) == "Gata. Nu sunt facturi noi."
+    line = weberrors.render_event({"type": "SyncFinished", "new": 1, "duplicates": 0, "pdf_failed": 0, "errors": 1, "base_dir": ""}, t)
+    assert "Facturi noi: 1" in line and "Erori: 1" in line and "1 erori" not in line
+    assert "mesaj(e)" not in weberrors.render_event({"type": "MessagesListed", "count": 23}, t)
+    assert "⚠" in weberrors.render_event({"type": "InvoiceDone", "download_id": "d", "invoice_id": "F", "supplier_name": "S", "issue_date": None, "pdf_ok": False, "pdf_path": "", "xml_path": ""}, t)
+
+
+def test_dates_are_shown_the_romanian_way(harness):
+    harness.write_cfg()
+    harness.synced()
+    core.set_state(core.connect_db(), "last_run", "2026-09-17T14:33:02")
+    core.save_tokens({"access_token": "a", "refresh_token": "r", "expires_at": 1797163200})  # 2026-12-13 12:00 UTC
+    home = harness.client.get("/").get_data(as_text=True)
+    assert "17.09.2026, 14:33" in home and "2026-09-17T14" not in home
+    assert "14.03.2026" in home and "2026-03-14" not in home.split("<table")[1]
+    assert "14.03.2026" in harness.client.get("/facturi").get_data(as_text=True)
+    assert "valabilă până la 13.12.2026" in harness.client.get("/setari").get_data(as_text=True)
+
+
+def test_filtered_empty_state_and_month_names(harness):
+    harness.write_cfg()
+    harness.synced()
+    html = harness.client.get("/facturi?furnizor=zzz").get_data(as_text=True)
+    assert "nu corespunde filtrelor" in html and 'href="/facturi"' in html
+    assert "descărcată încă" not in html
+    html = harness.client.get("/facturi").get_data(as_text=True)
+    assert "martie 2026" in html and "aprilie 2026" in html
+
+
+def test_cui_and_no_pdf_vocabulary(harness):
+    harness.write_cfg()
+    harness.app.runner.engine = lambda cfg: iter([core.SyncStarted("t", "1", 60), core.SyncFinished(0, 0, 0, 0, "")])
+    html = harness.client.get("/setari").get_data(as_text=True)
+    assert "CUI (cod fiscal)" in html and ">CIF<" not in html
+    monkeypatch_engine = None
+    html = harness.client.get("/").get_data(as_text=True)
+    assert "Facturi fără PDF" in html and "PDF nereușite" not in html
+    assert "CUI 50000000" not in html                        # no CIF/CUI card on home
+
+
+def test_no_pdf_row_is_explained(harness, monkeypatch):
+    harness.write_cfg()
+    monkeypatch.setattr(core, "xml_to_pdf", lambda xml, s: (_ for _ in ()).throw(RuntimeError("PDF conversion failed: x")))
+    harness.synced()
+    html = harness.client.get("/facturi").get_data(as_text=True)
+    assert "fără PDF" in html and "doar XML" not in html and "ANAF nu a putut genera" in html
+
+
+def test_accessibility_markup(harness):
+    harness.write_cfg()
+    harness.synced()
+    home = harness.client.get("/").get_data(as_text=True)
+    assert 'name="color-scheme"' in home and "color-scheme: light dark" in home
+    assert 'aria-current="page"' in home
+    assert 'role="log"' in home and 'tabindex="0"' in home and 'aria-live="polite"' in home
+    assert 'rel="icon"' in home and "button.primary[disabled]" in home
+    assert 'aria-label="Schimbă limba' in home
+    assert 'role="status"' in home or 'role="alert"' in home or "get_flashed_messages" not in home
+    inv = harness.client.get("/facturi").get_data(as_text=True)
+    assert 'aria-label="PDF pentru factura FAC-2026-001' in inv and 'class="table-wrap"' in inv
+    assert "--control-line" in inv and "flex-wrap: wrap" in inv
+    form = harness.post("/setari", client_id="", client_secret="", cif="abc", environment="prod",
+                        redirect_uri="x", base_dir="/abs").get_data(as_text=True)
+    assert 'role="alert"' in form and 'aria-describedby="cif-err"' in form and 'id="cif-err"' in form
+
+
+def test_wizard_has_back_links_and_a_localized_anaf_link(harness):
+    assert 'href="/start?step=1"' in harness.client.get("/start?step=2").get_data(as_text=True)
+    harness.write_cfg()
+    assert 'href="/start?step=2"' in harness.client.get("/start?step=3").get_data(as_text=True)
+    harness.post("/limba", lang="en")
+    html = harness.client.get("/start").get_data(as_text=True)
+    assert "Servicii online" in html and "Înregistrare API" not in html
+
+
+
+def test_refused_posts_log_a_reason_without_secrets(harness, caplog):
+    harness.write_cfg()
+    with caplog.at_level(logging.WARNING):
+        harness.client.post("/sync", data={"csrf": "stale-value"})
+        harness.client.post("/sync", data={"csrf": harness.csrf}, headers={"Origin": "http://evil.example"})
+    text = "\n".join(r.message for r in caplog.records)
+    assert "csrf token missing or stale" in text and "origin 'http://evil.example' not local" in text
+    assert "stale-value" not in text and harness.csrf not in text

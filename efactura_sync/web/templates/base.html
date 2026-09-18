@@ -3,26 +3,30 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="{{ url_for('favicon') }}" type="image/svg+xml">
 <title>{% block title %}{{ t('app') }}{% endblock %}</title>
 <style>
   :root {
+    color-scheme: light dark;
     --bg: #f7f7f8; --card: #fff; --fg: #1b1b1f; --muted: #6b6b73; --line: #e2e2e6;
-    --accent: #1d5fd1; --accent-fg: #fff; --ok: #1a7f4b; --warn: #b3261e; --code: #f1f1f4;
+    --control-line: #8e8e96; --accent: #1d5fd1; --accent-fg: #fff; --ok: #1a7f4b; --warn: #b3261e; --code: #f1f1f4;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #141417; --card: #1e1e23; --fg: #ececf1; --muted: #9a9aa6; --line: #2c2c33;
-      --accent: #6b9cff; --accent-fg: #0d1a33; --ok: #58c48a; --warn: #ff7b72; --code: #26262d;
+      --control-line: #6a6a78; --accent: #6b9cff; --accent-fg: #0d1a33; --ok: #58c48a; --warn: #ff7b72; --code: #26262d;
     }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg);
          font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
-  header { display: flex; align-items: center; gap: 20px; padding: 12px 24px;
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 12px 24px;
            background: var(--card); border-bottom: 1px solid var(--line); }
   header .brand { font-weight: 600; }
-  nav a { color: var(--muted); text-decoration: none; margin-right: 14px; }
-  nav a.active, nav a:hover { color: var(--fg); }
+  nav a { color: var(--muted); text-decoration: none; margin-right: 14px; padding-bottom: 2px; }
+  nav a:hover { color: var(--fg); text-decoration: underline; }
+  nav a.active { color: var(--fg); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
   header .spacer { flex: 1; }
   header form { margin: 0; }
   main { max-width: 960px; margin: 0 auto; padding: 24px; }
@@ -33,14 +37,16 @@
   .card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
   .card .v { font-size: 22px; font-weight: 600; margin-top: 2px; }
   .card .v.small { font-size: 15px; font-weight: 500; }
-  button, .btn { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--fg);
+  button, .btn { font: inherit; border: 1px solid var(--control-line); background: var(--card); color: var(--fg);
                  padding: 8px 14px; border-radius: 8px; cursor: pointer; text-decoration: none; display: inline-block; }
   button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
   button.big { padding: 12px 22px; font-size: 16px; }
   button.link { border: none; background: none; color: var(--muted); padding: 0; }
   button[disabled] { opacity: .6; cursor: default; }
+  button.primary[disabled] { opacity: 1; cursor: default; filter: saturate(.7); }
+  .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; word-break: break-word; }
   th { color: var(--muted); font-weight: 500; font-size: 13px; }
   tr:last-child td { border-bottom: none; }
   .muted { color: var(--muted); }
@@ -58,37 +64,42 @@
          white-space: pre-wrap; max-height: 320px; overflow: auto; }
   form.stack label { display: block; margin: 12px 0 4px; font-weight: 500; }
   form.stack input, form.stack select, form.stack textarea { width: 100%; font: inherit; padding: 8px 10px;
-         border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--fg); }
+         border: 1px solid var(--control-line); border-radius: 8px; background: var(--card); color: var(--fg); }
   form.stack .hint { color: var(--muted); font-size: 13px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .url { word-break: break-all; background: var(--code); padding: 10px; border-radius: 8px; font-size: 13px; }
+  .url, code { word-break: break-all; }
+  .url { background: var(--code); padding: 10px; border-radius: 8px; font-size: 13px; }
   footer { color: var(--muted); font-size: 12px; text-align: center; padding: 24px; }
 </style>
 </head>
 <body>
 <header>
   <span class="brand">{{ t('app') }}</span>
+  {% block nav %}
   <nav>
-    <a href="{{ url_for('home') }}" class="{{ 'active' if request.endpoint == 'home' }}">{{ t('nav_home') }}</a>
-    <a href="{{ url_for('invoices') }}" class="{{ 'active' if request.endpoint == 'invoices' }}">{{ t('nav_invoices') }}</a>
-    <a href="{{ url_for('settings') }}" class="{{ 'active' if request.endpoint == 'settings' }}">{{ t('nav_settings') }}</a>
+    <a href="{{ url_for('home') }}" class="{{ 'active' if request.endpoint == 'home' }}"{% if request.endpoint == 'home' %} aria-current="page"{% endif %}>{{ t('nav_home') }}</a>
+    <a href="{{ url_for('invoices') }}" class="{{ 'active' if request.endpoint == 'invoices' }}"{% if request.endpoint == 'invoices' %} aria-current="page"{% endif %}>{{ t('nav_invoices') }}</a>
+    <a href="{{ url_for('settings') }}" class="{{ 'active' if request.endpoint == 'settings' }}"{% if request.endpoint == 'settings' %} aria-current="page"{% endif %}>{{ t('nav_settings') }}</a>
   </nav>
   <span class="spacer"></span>
   <form method="post" action="{{ url_for('set_language') }}">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="next" value="{{ request.path }}">
     <input type="hidden" name="lang" value="{{ 'en' if lang == 'ro' else 'ro' }}">
-    <button class="link" type="submit" title="{{ t('language') }}">{{ 'EN' if lang == 'ro' else 'RO' }}</button>
+    <button class="link" type="submit" aria-label="{{ t('switch_lang') }}" title="{{ t('switch_lang') }}"><span lang="{{ 'en' if lang == 'ro' else 'ro' }}">{{ 'EN' if lang == 'ro' else 'RO' }}</span></button>
   </form>
+  {% endblock %}
 </header>
 <main>
+  <div role="status" aria-live="polite">
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, message in messages %}
       <div class="flash {{ category }}">{{ message }}</div>
     {% endfor %}
   {% endwith %}
+  </div>
   {% block content %}{% endblock %}
 </main>
-<footer>{{ t('app') }} {{ version }}</footer>
+<footer>{{ t('app') }} {{ version }} · {{ t('footer_local', url=request.host_url) }}</footer>
 </body>
 </html>

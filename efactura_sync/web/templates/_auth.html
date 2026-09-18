@@ -1,28 +1,40 @@
-{# ANAF authentication partial. Expects: auth, auth_expires, pending, auth_error, auth_detail, wizard. #}
+{# ANAF authentication partial. Expects: auth, auth_expires, pending, auth_error,
+   auth_more, auth_detail, wizard. #}
 <div class="card">
   <p>
     {% if auth.authenticated %}
-      <span class="ok">● {{ t('auth_yes') }}</span>
-      {% if auth_expires %}<span class="muted"> · {{ t('expires') }} {{ auth_expires }}</span>{% endif %}
+      <span class="ok"><span aria-hidden="true">●</span> {{ t('auth_yes') }}</span>
+      {% if auth_expires %}<span class="muted"> · {{ t('expires', date=auth_expires) }}</span>{% endif %}
     {% else %}
-      <span class="warn">● {{ t('auth_no') }}</span>
+      <span class="warn"><span aria-hidden="true">●</span> {{ t('auth_no') }}</span>
     {% endif %}
   </p>
 
   {% if auth_error %}
-    <div class="flash warn-border">
+    <div class="flash warn-border" role="alert">
       <strong>{{ t('error') }}:</strong>
       <div style="white-space: pre-wrap; margin-top: 6px;">{{ auth_error }}</div>
+      {% if auth_more %}
+        <details style="margin-top: 8px;"><summary class="muted">{{ t('adv_title') }}</summary>
+          <div style="white-space: pre-wrap; margin-top: 6px;">{{ auth_more }}</div></details>
+      {% endif %}
       {% if auth_detail %}
         <details style="margin-top: 8px;"><summary class="muted">{{ t('tech_details') }}</summary>
           <code>{{ auth_detail }}</code></details>
       {% endif %}
+      <form method="post" action="{{ url_for('auth_begin') }}" style="margin-top: 10px;">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        {% if wizard %}<input type="hidden" name="wizard" value="1">{% endif %}
+        <button type="submit">{{ t('auth_restart') }}</button>
+      </form>
     </div>
   {% endif %}
 
   {% if pending %}
     <ol>
-      <li>{{ t('auth_step1') }}<div class="url"><a href="{{ pending.url }}" target="_blank" rel="noopener">{{ pending.url }}</a></div></li>
+      <li>{{ t('auth_step1') }}
+        <div class="url"><a href="{{ pending.url }}" target="_blank" rel="noopener">{{ pending.url }}</a> <span class="muted">{{ t('new_tab') }}</span></div>
+        <div class="muted" style="font-size: 13px; margin-top: 4px;">{{ t('auth_copy_hint') }}</div></li>
       <li>{{ t('auth_step2') }}</li>
       <li>{{ t('auth_step3') }}</li>
     </ol>
@@ -33,7 +45,7 @@
       <textarea id="pasted" name="pasted" rows="3" required></textarea>
       <div style="margin-top: 10px;"><button class="primary" type="submit">{{ t('auth_complete') }}</button></div>
     </form>
-  {% else %}
+  {% elif not auth_error %}
     <form method="post" action="{{ url_for('auth_begin') }}">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       {% if wizard %}<input type="hidden" name="wizard" value="1">{% endif %}

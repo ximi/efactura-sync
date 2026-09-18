@@ -13,7 +13,7 @@
   <label>{{ t('filter_month') }}
     <select name="luna">
       <option value="">{{ t('all') }}</option>
-      {% for m in months %}<option value="{{ m }}" {{ 'selected' if m == month }}>{{ m }}</option>{% endfor %}
+      {% for m in months %}<option value="{{ m }}" {{ 'selected' if m == month }}>{{ fmt_month(m) }}</option>{% endfor %}
     </select>
   </label>
   <label>{{ t('filter_supplier') }} <input name="furnizor" value="{{ supplier }}"></label>
@@ -21,6 +21,7 @@
 </form>
 
 {% if rows %}
+<div class="table-wrap">
 <table>
   <thead><tr>
     <th>{{ t('col_date') }}</th><th>{{ t('col_invoice') }}</th><th>{{ t('col_supplier') }}</th><th></th>
@@ -28,18 +29,20 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <td class="nowrap">{{ r.issue_date or '—' }}</td>
-      <td class="nowrap">{{ r.invoice_id }}{% if r.doc_type == 'credit_note' %} <span class="badge">{{ t('credit_note') }}</span>{% endif %}</td>
-      <td>{{ r.supplier_name }}<div class="muted cif">{{ r.supplier_cif }}</div></td>
-      <td class="nowrap">{% if r.pdf_ok and r.pdf_path %}<a class="btn" href="{{ url_for('pdf', download_id=r.download_id) }}" target="_blank">{{ t('open_pdf') }}</a>
-          {% else %}<span class="muted">{{ t('xml_only') }}</span>{% endif %}</td>
+      <td class="nowrap">{{ r.issue_date | fmt_date if r.issue_date else '—' }}</td>
+      <td class="nowrap">{{ r.invoice_id }}{% if r.doc_type == 'credit_note' %} <span class="badge" title="{{ t('credit_note_long') }}">{{ t('credit_note') }}</span>{% endif %}</td>
+      <td>{{ r.supplier_name }}{% if r.supplier_cif %}<div class="muted cif">CUI {{ r.supplier_cif }}</div>{% endif %}</td>
+      <td class="nowrap">{% if r.pdf_ok and r.pdf_path %}<a class="btn" href="{{ url_for('pdf', download_id=r.download_id) }}" target="_blank" rel="noopener" aria-label="{{ t('open_pdf_for', invoice=r.invoice_id) }}">{{ t('open_pdf') }}</a>
+          {% else %}<span class="muted" title="{{ t('no_pdf_why') }}">{{ t('xml_only') }}</span>{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
+</div>
+<p class="muted" style="margin-top: 16px;">{{ t('csv_note') }}<br><code>{{ base_dir }}</code></p>
+{% elif month or supplier %}
+<p class="muted">{{ t('no_invoices_filtered') }} <a href="{{ url_for('invoices') }}">{{ t('clear_filters') }}</a></p>
 {% else %}
 <p class="muted">{{ t('no_invoices') }}</p>
 {% endif %}
-
-<p class="muted" style="margin-top: 16px;">{{ t('csv_note') }}<br><code>{{ base_dir }}</code></p>
 {% endblock %}

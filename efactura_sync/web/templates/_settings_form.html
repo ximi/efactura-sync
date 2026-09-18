@@ -1,44 +1,49 @@
-{# Settings form partial. Expects: raw, errors, next_url, environments, secret_set.
-   Design 2026-09-17: only what a user must provide is visible; environment and
-   callback URL live under "advanced". autocomplete=off keeps the browser from
-   replaying values typed in an earlier session. #}
+{# Settings form partial. Expects: raw, errors, next_url, environments, secret_set,
+   config_problem, adv_open. Design 2026-09-17: only what a user must provide is
+   visible; environment and callback URL live under "advanced". #}
 <form method="post" action="{{ url_for('save_settings') }}" class="stack card" autocomplete="off">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
 
-  {% if config_problem %}<div class="flash warn-border">{{ t('config_corrupt') }}</div>{% endif %}
-  {% if errors %}<div class="flash warn-border">{{ t('val_fix') }}</div>{% endif %}
+  {% if config_problem %}<div class="flash warn-border" role="alert">{{ t('config_corrupt') }}</div>{% endif %}
+  {% if errors %}<div class="flash warn-border" role="alert" tabindex="-1" autofocus>{{ t('val_fix') }}</div>{% endif %}
 
   <label for="client_id">{{ t('client_id') }}</label>
-  <input id="client_id" name="client_id" value="{{ raw.get('client_id', '') }}" autocomplete="off" {{ 'aria-invalid=true' if errors.client_id }}>
-  {% if errors.client_id %}<div class="field-error">{{ errors.client_id }}</div>{% endif %}
+  <input id="client_id" name="client_id" value="{{ raw.get('client_id', '') }}" autocomplete="off"
+         {% if errors.client_id %}aria-invalid="true" aria-describedby="client_id-err"{% endif %}>
+  {% if errors.client_id %}<div class="field-error" id="client_id-err">{{ errors.client_id }}</div>{% endif %}
 
   <label for="client_secret">{{ t('client_secret') }} {% if secret_set %}<span class="muted">{{ t('secret_set') }}</span>{% endif %}</label>
   <input id="client_secret" name="client_secret" type="password" value="" autocomplete="new-password"
-         placeholder="{{ t('secret_keep') if secret_set else '' }}">
+         placeholder="{{ t('secret_keep') if secret_set else '' }}"
+         {% if errors.client_secret %}aria-invalid="true" aria-describedby="client_secret-err"{% endif %}>
+  {% if errors.client_secret %}<div class="field-error" id="client_secret-err">{{ errors.client_secret }}</div>{% endif %}
+  {% if errors and not secret_set %}<div class="field-error">{{ t('secret_retype') }}</div>{% endif %}
 
   <label for="cif">{{ t('cif') }} <span class="hint">({{ t('cif_hint') }})</span></label>
-  <input id="cif" name="cif" value="{{ raw.get('cif', '') }}" autocomplete="off" inputmode="numeric" {{ 'aria-invalid=true' if errors.cif }}>
-  {% if errors.cif %}<div class="field-error">{{ errors.cif }}</div>{% endif %}
+  <input id="cif" name="cif" value="{{ raw.get('cif', '') }}" autocomplete="off" inputmode="numeric"
+         {% if errors.cif %}aria-invalid="true" aria-describedby="cif-err"{% endif %}>
+  {% if errors.cif %}<div class="field-error" id="cif-err">{{ errors.cif }}</div>{% endif %}
 
   <label for="base_dir">{{ t('base_dir') }} <span class="hint">— {{ t('folder_hint') }}</span></label>
-  <div class="row" style="flex-wrap: nowrap;">
-    <input id="base_dir" name="base_dir" value="{{ raw.get('base_dir', '') }}" autocomplete="off" style="flex: 1;" {{ 'aria-invalid=true' if errors.base_dir }}>
-    <button type="button" id="pick-folder">{{ t('choose') }}</button>
+  <div class="row">
+    <input id="base_dir" name="base_dir" value="{{ raw.get('base_dir', '') }}" autocomplete="off" style="flex: 1; min-width: 200px;"
+           {% if errors.base_dir %}aria-invalid="true" aria-describedby="base_dir-err"{% endif %}>
+    <button type="button" id="pick-folder" aria-label="{{ t('choose_folder') }}">{{ t('choose') }}</button>
   </div>
-  {% if errors.base_dir %}<div class="field-error">{{ errors.base_dir }}</div>{% endif %}
+  {% if errors.base_dir %}<div class="field-error" id="base_dir-err">{{ errors.base_dir }}</div>{% endif %}
 
-  <details style="margin-top: 16px;" {{ 'open' if errors.environment }}>
+  <details style="margin-top: 16px;" {{ 'open' if errors.environment or adv_open }}>
     <summary class="muted">{{ t('adv_title') }}</summary>
     <p class="hint" style="margin: 8px 0 0;">{{ t('adv_hint') }}</p>
 
     <label for="environment">{{ t('environment') }}</label>
-    <select id="environment" name="environment">
+    <select id="environment" name="environment" {% if errors.environment %}aria-invalid="true" aria-describedby="environment-err"{% endif %}>
       {% for env in environments %}
         <option value="{{ env }}" {{ 'selected' if raw.get('environment', 'prod') == env }}>{{ t('environment_' + env) }}</option>
       {% endfor %}
     </select>
-    {% if errors.environment %}<div class="field-error">{{ errors.environment }}</div>{% endif %}
+    {% if errors.environment %}<div class="field-error" id="environment-err">{{ errors.environment }}</div>{% endif %}
 
     <label for="redirect_uri">{{ t('redirect_uri') }}</label>
     <input id="redirect_uri" name="redirect_uri" value="{{ raw.get('redirect_uri', '') }}" autocomplete="off">
@@ -49,14 +54,17 @@
 <script>
 (function () {
   const btn = document.getElementById('pick-folder'), input = document.getElementById('base_dir');
+  const label = btn.textContent;
   btn.addEventListener('click', async () => {
-    btn.disabled = true;
+    btn.disabled = true; btn.textContent = '…';
     try {
       const body = new URLSearchParams({csrf: {{ csrf | tojson }}, initial: input.value});
       const r = await fetch({{ url_for('choose_folder') | tojson }}, {method: 'POST', body});
       const j = await r.json();
       if (j.path) input.value = j.path;
-    } finally { btn.disabled = false; }
+    } catch (_) {
+      /* the text field still works */
+    } finally { btn.disabled = false; btn.textContent = label; }
   });
 })();
 </script>

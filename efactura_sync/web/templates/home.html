@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block title %}{{ t('nav_home') }} · {{ t('app') }}{% endblock %}
 {% block content %}
 <div class="row" style="justify-content: space-between; margin-bottom: 16px;">
   <div>
@@ -7,42 +8,50 @@
   </div>
   <form method="post" action="{{ url_for('start_sync') }}">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="primary big" type="submit" {{ 'disabled' if running }}>
+    <button class="primary big" type="submit" {% if running %}disabled aria-disabled="true" aria-busy="true"{% endif %}>
       {{ t('sync_running') if running else t('sync') }}
     </button>
   </form>
 </div>
 
+{% if not auth.authenticated %}
+  <div class="flash warn-border" role="alert">{{ t('err_not_authenticated') }} <a href="{{ url_for('settings') }}">{{ t('nav_settings') }} →</a></div>
+{% elif last_error %}
+  <div class="flash warn-border" role="alert">{{ last_error }}</div>
+{% endif %}
+
 <div class="cards">
   <div class="card"><div class="k">{{ t('last_sync') }}</div>
-    <div class="v small">{{ report.last_run or t('never') }}</div></div>
+    <div class="v small">{{ report.last_run | fmt_datetime if report.last_run else t('never') }}</div></div>
   <div class="card"><div class="k">{{ t('total') }}</div><div class="v">{{ report.total }}</div></div>
   <div class="card"><div class="k">{{ t('this_month') }}</div><div class="v">{{ report.this_month }}</div></div>
   <div class="card"><div class="k">{{ t('pdf_failed') }}</div>
-    <div class="v {{ 'warn' if report.pdf_failed }}">{{ report.pdf_failed }}</div></div>
+    <div class="v {{ 'warn' if report.pdf_failed }}" title="{{ t('no_pdf_why') }}">{{ report.pdf_failed }}</div></div>
 </div>
 
 {% if lines or running %}
-<h2>{{ t('log') }}</h2>
-<div class="log" id="log">{% for line in lines %}{{ line }}
+<h2 id="log-h">{{ t('log') }}</h2>
+<div class="log" id="log" tabindex="0" role="log" aria-live="polite" aria-labelledby="log-h">{% for line in lines %}{{ line }}
 {% endfor %}</div>
 {% endif %}
 
 {% if report.recent %}
 <h2>{{ t('recent') }}</h2>
+<div class="table-wrap">
 <table>
   <thead><tr><th>{{ t('col_date') }}</th><th>{{ t('col_invoice') }}</th><th>{{ t('col_supplier') }}</th><th></th></tr></thead>
   <tbody>
   {% for inv in report.recent %}
     <tr>
-      <td>{{ inv.issue_date or '—' }}</td>
-      <td>{{ inv.invoice_id }}</td>
+      <td class="nowrap">{{ inv.issue_date | fmt_date if inv.issue_date else '—' }}</td>
+      <td class="nowrap">{{ inv.invoice_id }}</td>
       <td>{{ inv.supplier_name }}</td>
-      <td>{% if not inv.pdf_ok %}<span class="muted">{{ t('xml_only') }}</span>{% endif %}</td>
+      <td class="nowrap">{% if not inv.pdf_ok %}<span class="muted" title="{{ t('no_pdf_why') }}">{{ t('xml_only') }}</span>{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
+</div>
 {% endif %}
 
 {% if running %}
@@ -52,10 +61,12 @@
   const es = new EventSource('{{ url_for('sync_events') }}');
   log.textContent = '';
   es.onmessage = ev => {
-    log.textContent += JSON.parse(ev.data).text + '\n';
-    log.scrollTop = log.scrollHeight;
+    const e = JSON.parse(ev.data);
+    if (e.text) { log.textContent += e.text + '\n'; log.scrollTop = log.scrollHeight; }
   };
-  es.addEventListener('done', () => { es.close(); setTimeout(() => location.reload(), 600); });
+  const finish = () => { es.close(); setTimeout(() => location.reload(), 600); };
+  es.addEventListener('done', finish);
+  es.onerror = () => setTimeout(finish, 3000);
 })();
 </script>
 {% endif %}
