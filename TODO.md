@@ -86,7 +86,26 @@ Dates are when the decision was made.
 - Verify Quit + idle exit on both OS. Log file in the config dir. "Copy diagnostic
   info" button (versions, OS, last error — never secrets).
 
-## WP6 — Code signing (decided 2026-09-18; no cost until the route is chosen)
+## WP5 — done 2026-09-18
+
+- Setări → Diagnostic: „Copiază informații de diagnostic” (clipboard, textarea
+  fallback) and `/diagnostic` as plain text: version, Python/platform/frozen, config
+  dir, environment, auth state, last sync/totals, last run's log lines, last 30
+  `ui.log` lines with token-like strings masked; client secret, tokens and the CUI
+  never appear (pinned by a test).
+- `ui.log` rotates (1 MB × 3).
+- Verified live on macOS: Quit exits the process (code 0); idle exit fires on the
+  next watchdog tick and the port is released. Windows: still unverified by a human.
+
+## WP6 — Code signing (parked 2026-09-18)
+
+Decision 2026-09-18: stay unsigned for now. SignPath Foundation requires "a certain
+verifiable reputation" before signing an executable, plus MFA, a published
+"Code signing policy" section, a VERSIONINFO resource on the EXE and a manual
+approval per release; the pipeline shape (upload-artifact → SignPath action pinned
+by SHA → signed EXE, inert until a secret exists) was prototyped and reverted.
+Revisit once the project has users/stars; Azure Trusted Signing remains the paid
+alternative (~€10/month, eligibility check first).
 
 - Windows: 1) check Azure Trusted Signing eligibility (country + identity validation;
   ~€10/month, cloud HSM, official GitHub Action); 2) fallback SignPath Foundation

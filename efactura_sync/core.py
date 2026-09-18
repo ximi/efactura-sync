@@ -73,8 +73,11 @@ def setup_frozen_logging() -> None:
     if not getattr(sys, "frozen", False):
         return
     ensure_config_dir()
-    logging.basicConfig(filename=str(CONFIG_DIR / "ui.log"), level=logging.INFO,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    from logging.handlers import RotatingFileHandler
+    handler = RotatingFileHandler(str(CONFIG_DIR / "ui.log"), maxBytes=1_000_000,
+                                  backupCount=3, encoding="utf-8")   # bounded (ops review)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logging.basicConfig(level=logging.INFO, handlers=[handler])
     if sys.stdout is None:
         sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
     if sys.stderr is None:

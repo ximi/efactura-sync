@@ -174,6 +174,15 @@ def pick_folder_default(initial) -> str | None:
 _NEXT_RE = re.compile(r"/(?!/)[A-Za-z0-9_\-./?=&%]*")
 
 
+# Anything that looks like a token or key (long unbroken alnum/base64 runs) is
+# masked before a log line can leave the machine in a support request.
+_SECRET_RE = re.compile(r"[A-Za-z0-9_\-]{32,}")
+
+
+def _redact(line: str) -> str:
+    return _SECRET_RE.sub("[redacted]", line)
+
+
 def _safe_next(value: str | None, fallback: str) -> str:
     """Only same-app paths may be redirect targets."""
     return value if value and _NEXT_RE.fullmatch(value) else fallback
@@ -271,6 +280,40 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
     def any_error(exc):
         log.exception("unhandled error")
         return render_template("error.html", message=t()("err_server"), code=500), 500
+
+    @app.get("/diagnostic")
+    def diagnostic():
+        """Plain text a user can paste into a support request. Never a secret, never
+        the CUI: versions, platform, paths, auth state, last run, last log lines."""
+        tr = t()
+        raw = core.read_config_raw()
+        tok = core.token_status()
+        lines = [
+            f"eFactura Sync {__version__}",
+            f"python: {sys.version.split()[0]}  platform: {sys.platform}  frozen: {bool(getattr(sys, 'frozen', False))}",
+            f"config dir: {core.CONFIG_DIR}",
+            f"environment: {raw.get('environment', core.DEFAULT_ENVIRONMENT)}  language: {raw.get('language', 'ro')}",
+            f"authenticated: {'yes' if tok['authenticated'] else 'no'}"
+            + (f"  expires: {fmt_ts(tok['expires_at'])}" if tok.get("expires_at") else ""),
+        ]
+        try:
+            report = core.status_report(core.load_config())
+            lines.append(f"last sync: {report.last_run or '-'}  invoices: {report.total}  "
+                         f"without pdf: {report.pdf_failed}")
+        except core.ConfigError as exc:
+            lines.append(f"config: {exc.code}")
+        events = [render_event(e, tr) for e in app.runner.events]
+        if events:
+            lines += ["", "last run:"] + [f"  {e}" for e in events if e][-20:]
+        log_path = core.CONFIG_DIR / "ui.log"
+        if log_path.exists():
+            tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-30:]
+            lines += ["", "ui.log (last 30 lines):"] + [f"  {_redact(l)}" for l in tail]
+        text = "\n".join(lines) + "\n"
+        cif = core.normalize_cif(str(raw.get("cif", "")))
+        if cif:
+            text = text.replace(cif, "[cui]")       # company id stays on the machine
+        return Response(text, mimetype="text/plain")
 
     @app.get("/favicon.svg")
     def favicon():

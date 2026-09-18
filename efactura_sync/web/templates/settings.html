@@ -8,6 +8,27 @@
 <h2>{{ t('auth') }}</h2>
 {% include "_auth.html" %}
 
+<h2>{{ t('diag_title') }}</h2>
+<div class="card">
+  <p class="muted" style="margin-top:0">{{ t('diag_hint') }}</p>
+  <div class="row">
+    <button type="button" id="diag-copy">{{ t('diag_copy') }}</button>
+    <a href="{{ url_for('diagnostic') }}" target="_blank" rel="noopener" class="muted">{{ t('diag_open') }}</a>
+    <span id="diag-status" class="ok" role="status"></span>
+  </div>
+  <textarea id="diag-text" class="log" style="display:none; width:100%; margin-top:10px;" rows="8" readonly></textarea>
+</div>
+<script>
+(function () {
+  const btn = document.getElementById('diag-copy'), status = document.getElementById('diag-status'), box = document.getElementById('diag-text');
+  btn.addEventListener('click', async () => {
+    const text = await (await fetch({{ url_for('diagnostic') | tojson }})).text();
+    try { await navigator.clipboard.writeText(text); status.textContent = {{ t('diag_copied') | tojson }}; }
+    catch (_) { box.style.display = 'block'; box.value = text; box.select(); }
+  });
+})();
+</script>
+
 <form method="post" action="{{ url_for('quit_app') }}" style="margin-top: 32px;">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <button type="submit">{{ t('quit') }}</button>

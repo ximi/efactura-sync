@@ -655,3 +655,51 @@ def test_refused_posts_log_a_reason_without_secrets(harness, caplog):
     text = "\n".join(r.message for r in caplog.records)
     assert "csrf token missing or stale" in text and "origin 'http://evil.example' not local" in text
     assert "stale-value" not in text and harness.csrf not in text
+
+
+# =========================================================================== #
+# WP5 — polish: diagnostic info, log rotation
+# =========================================================================== #
+
+def test_diagnostic_text_has_context_and_never_secrets(harness, monkeypatch):
+    harness.write_cfg()
+    core.save_tokens({"access_token": "AT-super-secret-token-value-0123456789", "refresh_token": "RT-refresh-secret-value-0123456789abcdef", "expires_at": 4102444800})
+    (harness.tmp / "ui.log").write_text("2026-09-18 INFO x: started\n2026-09-18 ERROR y: Token refresh failed (400): QWERTYUIOPASDFGHJKLZXCVBNMqwertyuiopasdfghjk0123\n")
+    harness.app.runner.engine = lambda cfg: iter([core.SyncStarted("test", "50000000", 60), core.SyncError("", "boom", "network"), core.SyncFinished(0, 0, 0, 1, "x")])
+    harness.synced()
+    r = harness.client.get("/diagnostic")
+    text = r.get_data(as_text=True)
+    assert r.status_code == 200 and r.mimetype == "text/plain"
+    for needle in ("eFactura Sync", core.__name__.split(".")[0] and __import__("efactura_sync").__version__,
+                   sys.platform, "python", "environment: test", "authenticated: yes",
+                   "Nu s-a putut contacta ANAF", "ui.log", "started"):
+        assert needle in text, needle
+    for secret in ("topsecret-value", "AT-super-secret", "RT-refresh-secret", "QWERTYUIOPASDFGHJKLZXCVBNMqwertyuiopasdfghjk0123", "50000000"):
+        assert secret not in text, secret
+    assert "[redacted]" in text                        # the long token-like string in ui.log
+
+
+def test_settings_offers_the_diagnostic_copy(harness):
+    harness.write_cfg()
+    html = harness.client.get("/setari").get_data(as_text=True)
+    assert 'href="/diagnostic"' in html and "Copiază informații de diagnostic" in html
+
+
+def test_frozen_logging_rotates(monkeypatch, tmp_path):
+    import logging.handlers
+    monkeypatch.setattr(core.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(core, "CONFIG_DIR", tmp_path)
+    root = logging.getLogger()
+    saved = root.handlers[:]
+    for h in saved:
+        root.removeHandler(h)
+    try:
+        core.setup_frozen_logging()
+        rot = [h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
+        assert rot and rot[0].maxBytes == 1_000_000 and rot[0].backupCount == 3
+        assert Path(rot[0].baseFilename) == tmp_path / "ui.log"
+    finally:
+        for h in root.handlers[:]:
+            root.removeHandler(h)
+        for h in saved:
+            root.addHandler(h)
