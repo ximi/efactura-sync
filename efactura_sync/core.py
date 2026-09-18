@@ -872,7 +872,7 @@ def get_state(conn: sqlite3.Connection, key: str) -> str | None:
 
 
 def list_invoices(firm_id: str, month: str | None = None,
-                  supplier: str | None = None) -> list[dict]:
+                  supplier: str | None = None, missing_pdf: bool = False) -> list[dict]:
     """One firm's invoices for the UI table, newest first. month = 'YYYY-MM'."""
     conn = connect_db()
     try:
@@ -881,13 +881,65 @@ def list_invoices(firm_id: str, month: str | None = None,
             "doc_type, pdf_ok, pdf_path FROM invoices "
             "WHERE firm_id = ? AND (? = '' OR substr(issue_date, 1, 7) = ?) "
             "AND (? = '' OR lower(supplier_name) LIKE ?) "
+            "AND (? = 0 OR pdf_ok = 0) "
             "ORDER BY issue_date DESC, downloaded_at DESC",
             (firm_id, month or "", month or "", supplier or "",
-             f"%{(supplier or '').lower()}%"),
+             f"%{(supplier or '').lower()}%", int(missing_pdf)),
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def retry_pdf(firm_id: str, download_id: str) -> tuple[bool, str]:
+    """Ask ANAF again for the PDF of a filed invoice (UX review item, 2026-09-18).
+
+    Uses the XML kept next to the invoice; on success writes the PDF, flips the
+    row and rewrites its line in invoices.csv. Returns (ok, raw error message).
+    """
+    row = invoice_by_download_id(firm_id, download_id)
+    if not row:
+        raise KeyError(download_id)
+    xml_path = Path(row["xml_path"] or "")
+    if not xml_path.is_file():
+        return False, "invoice XML no longer on disk"
+    xml_bytes = xml_path.read_bytes()
+    try:
+        pdf_bytes = xml_to_pdf(xml_bytes, parse_invoice_xml(xml_bytes)["standard"])
+    except Exception as exc:  # noqa: BLE001 — reported to the caller, never raised
+        return False, str(exc)
+    pdf_path = xml_path.with_suffix(".pdf")
+    pdf_path.write_bytes(pdf_bytes)
+    conn = connect_db()
+    try:
+        conn.execute("UPDATE invoices SET pdf_ok = 1, pdf_path = ?, note = '' "
+                     "WHERE firm_id = ? AND download_id = ?", (str(pdf_path), firm_id, download_id))
+        conn.commit()
+    finally:
+        conn.close()
+    _rewrite_csv_row(xml_path.parent, download_id,
+                     {"pdf_ok": 1, "pdf_path": str(pdf_path)})
+    return True, ""
+
+
+def _rewrite_csv_row(directory: Path, download_id: str, changes: dict) -> None:
+    """Update one invoice's line in the firm's invoices.csv (it lives in base_dir,
+    the grandparent of the YYYY/MM folder); missing file → nothing to update."""
+    csv_path = directory.parent.parent / "invoices.csv"
+    if not csv_path.is_file():
+        return
+    with csv_path.open(newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    for r in rows:
+        if r.get("download_id") == download_id:
+            r.update({k: str(v) for k, v in changes.items()})
+    tmp = csv_path.with_suffix(".csv.tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=CSV_FIELDS, extrasaction="ignore")
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: _csv_safe(v) for k, v in r.items()})
+    tmp.replace(csv_path)
 
 
 def invoice_months(firm_id: str) -> list[str]:

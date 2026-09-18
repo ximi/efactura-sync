@@ -137,7 +137,7 @@ def _applescript_str(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def pick_folder_default(initial) -> str | None:
+def pick_folder_default(initial, prompt: str | None = None) -> str | None:
     """Native folder dialog, opened by the local app on behalf of the browser page
     (a web page cannot read folder paths itself). None when cancelled/unavailable."""
     initial = str(initial or Path.home())
@@ -148,7 +148,7 @@ def pick_folder_default(initial) -> str | None:
             # No "System Events" wrapper: that costs an Automation-permission prompt
             # on an unsigned app; a bare `choose folder` needs none.
             script = ('POSIX path of (choose folder with prompt '
-                      f'"Alege dosarul pentru facturi"{default})')
+                      f'"{_applescript_str(prompt or "Alege dosarul pentru facturi")}"{default})')
             out = subprocess.run(["osascript", "-e", script], capture_output=True,
                                  text=True, timeout=600)
             return out.stdout.strip().rstrip("/") or None if out.returncode == 0 else None
@@ -156,6 +156,7 @@ def pick_folder_default(initial) -> str | None:
             ps = ("Add-Type -AssemblyName System.Windows.Forms; "
                   "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
                   f"$d.SelectedPath = '{initial.replace(chr(39), chr(39) * 2)}'; "
+                  f"$d.Description = '{(prompt or 'Alege dosarul pentru facturi').replace(chr(39), chr(39) * 2)}'; "
                   "if ($d.ShowDialog() -eq 'OK') { Write-Output $d.SelectedPath }")
             out = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps],
                                  capture_output=True, text=True, timeout=600,
@@ -415,9 +416,10 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
             return resp
         month = request.args.get("luna", "").strip()
         supplier = request.args.get("furnizor", "").strip()
-        rows = core.list_invoices(cfg["firm_id"], month or None, supplier or None)
+        missing = request.args.get("fara_pdf") == "1"
+        rows = core.list_invoices(cfg["firm_id"], month or None, supplier or None, missing_pdf=missing)
         return render_template("invoices.html", rows=rows, months=core.invoice_months(cfg["firm_id"]),
-                               month=month, supplier=supplier,
+                               month=month, supplier=supplier, missing=missing,
                                base_dir=str(Path(cfg["base_dir"]).expanduser()))
 
     @app.get("/pdf/<download_id>")
@@ -460,10 +462,35 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
         return Response(generate(), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+    @app.post("/pdf/<download_id>/reincearca")
+    def retry_pdf(download_id):
+        cfg, resp = load_cfg_or_redirect()
+        if resp:
+            return resp
+        try:
+            ok, _msg = core.retry_pdf(cfg["firm_id"], download_id)
+        except KeyError:
+            abort(404, description="err_pdf_missing")
+        flash(t()("pdf_retry_ok" if ok else "err_pdf_failed"), "ok" if ok else "info")
+        return redirect(url_for("invoices", fara_pdf=None if ok else 1), code=303)
+
+    @app.post("/pdf/reincearca-toate")
+    def retry_all_pdfs():
+        cfg, resp = load_cfg_or_redirect()
+        if resp:
+            return resp
+        done = failed = 0
+        for row in core.list_invoices(cfg["firm_id"], missing_pdf=True):
+            ok, _msg = core.retry_pdf(cfg["firm_id"], row["download_id"])
+            done += ok
+            failed += not ok
+        flash(t()("pdf_retry_all", done=done, failed=failed), "ok" if not failed else "info")
+        return redirect(url_for("invoices", fara_pdf=1 if failed else None), code=303)
+
     @app.post("/alege-dosar")
     def choose_folder():
         initial = request.form.get("initial") or str(core.DEFAULT_BASE_DIR)
-        return {"path": app.pick_folder(initial)}
+        return {"path": app.pick_folder(initial, t()("choose_folder"))}
 
     @app.post("/deschide-dosar")
     def open_folder():

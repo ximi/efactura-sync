@@ -156,8 +156,9 @@ def harness(tmp_path, monkeypatch):
 
     calls = {"opened": [], "shutdown": 0, "pick_result": None, "pick_initial": None}
 
-    def pick(initial):
+    def pick(initial, prompt=None):
         calls["pick_initial"] = str(initial)
+        calls["pick_prompt"] = prompt
         return calls["pick_result"]
 
     app = create_app(

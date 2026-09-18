@@ -17,7 +17,12 @@
     </select>
   </label>
   <label>{{ t('filter_supplier') }} <input name="furnizor" value="{{ supplier }}"></label>
+  <label><input type="checkbox" name="fara_pdf" value="1" {{ 'checked' if missing }}> {{ t('filter_missing_pdf') }}</label>
   <button type="submit">{{ t('filter') }}</button>
+  {% if missing and rows %}
+  <button type="submit" formmethod="post" formaction="{{ url_for('retry_all_pdfs') }}" class="primary">{{ t('pdf_retry_all_btn') }}</button>
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {% endif %}
 </form>
 
 {% if rows %}
@@ -33,14 +38,17 @@
       <td class="nowrap">{{ r.invoice_id }}{% if r.doc_type == 'credit_note' %} <span class="badge" title="{{ t('credit_note_long') }}">{{ t('credit_note') }}</span>{% endif %}</td>
       <td>{{ r.supplier_name }}{% if r.supplier_cif %}<div class="muted cif">CUI {{ r.supplier_cif }}</div>{% endif %}</td>
       <td class="nowrap">{% if r.pdf_ok and r.pdf_path %}<a class="btn" href="{{ url_for('pdf', download_id=r.download_id) }}" target="_blank" rel="noopener" aria-label="{{ t('open_pdf_for', invoice=r.invoice_id) }}">{{ t('open_pdf') }}</a>
-          {% else %}<span class="muted" title="{{ t('no_pdf_why') }}">{{ t('xml_only') }}</span>{% endif %}</td>
+          {% else %}<span class="muted" title="{{ t('no_pdf_why') }}">{{ t('xml_only') }}</span>
+          <form method="post" action="{{ url_for('retry_pdf', download_id=r.download_id) }}" style="display:inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">{{ t('pdf_retry') }}</button>
+          </form>{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
 </div>
 <p class="muted" style="margin-top: 16px;">{{ t('csv_note') }}<br><code>{{ base_dir }}</code></p>
-{% elif month or supplier %}
+{% elif month or supplier or missing %}
 <p class="muted">{{ t('no_invoices_filtered') }} <a href="{{ url_for('invoices') }}">{{ t('clear_filters') }}</a></p>
 {% else %}
 <p class="muted">{{ t('no_invoices') }}</p>

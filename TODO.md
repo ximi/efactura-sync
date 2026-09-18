@@ -210,9 +210,10 @@ alternative (~€10/month, eligibility check first).
   button. Now `same-origin`; the guard logs the refusal reason (never the token).
   Lesson recorded: header/CSRF changes need a real-browser click, the test client
   cannot see them.
-- Not done from the UX list (small, later): localized native picker prompt on
-  macOS/Windows; "Copiază adresa" button for the ANAF URL; PDF-retry for invoices
-  without PDF.
+- UX deferrals done 2026-09-18: localized native picker prompts (macOS prompt,
+  Windows dialog description); „Copiază adresa” on the ANAF URL; PDF retry per
+  invoice and for all missing (Facturi filter „doar fără PDF”, Home card links to it;
+  the CSV line is rewritten on success).
 
 ## Deferred (from the 2026-09-17 security review)
 

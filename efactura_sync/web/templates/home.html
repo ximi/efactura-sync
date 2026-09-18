@@ -26,7 +26,7 @@
   <div class="card"><div class="k">{{ t('total') }}</div><div class="v">{{ report.total }}</div></div>
   <div class="card"><div class="k">{{ t('this_month') }}</div><div class="v">{{ report.this_month }}</div></div>
   <div class="card"><div class="k">{{ t('pdf_failed') }}</div>
-    <div class="v {{ 'warn' if report.pdf_failed }}" title="{{ t('no_pdf_why') }}">{{ report.pdf_failed }}</div></div>
+    <div class="v {{ 'warn' if report.pdf_failed }}" title="{{ t('no_pdf_why') }}">{% if report.pdf_failed %}<a href="{{ url_for('invoices', fara_pdf=1) }}" style="color: inherit;">{{ report.pdf_failed }}</a>{% else %}{{ report.pdf_failed }}{% endif %}</div></div>
 </div>
 
 {% if lines or running %}

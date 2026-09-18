@@ -34,6 +34,17 @@
     <ol>
       <li>{{ t('auth_step1') }}
         <div class="url"><a href="{{ pending.url }}" target="_blank" rel="noopener">{{ pending.url }}</a> <span class="muted">{{ t('new_tab') }}</span></div>
+        <div class="row" style="margin-top: 6px;">
+          <button type="button" id="copy-url">{{ t('copy_url') }}</button>
+          <span id="copy-status" class="ok" role="status"></span>
+        </div>
+        <script>
+          document.getElementById('copy-url').addEventListener('click', async () => {
+            try { await navigator.clipboard.writeText({{ pending.url | tojson }});
+                  document.getElementById('copy-status').textContent = {{ t('copied') | tojson }}; }
+            catch (_) { window.prompt({{ t('copy_url') | tojson }}, {{ pending.url | tojson }}); }
+          });
+        </script>
         <div class="muted" style="font-size: 13px; margin-top: 4px;">{{ t('auth_copy_hint') }}</div></li>
       <li>{{ t('auth_step2') }}</li>
       <li>{{ t('auth_step3') }}</li>
