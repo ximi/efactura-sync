@@ -170,3 +170,114 @@ def test_sync_isolates_firms(paths, monkeypatch):
     assert core.invoice_by_download_id("f1", "1001")["invoice_id"] == "FAC-2026-001"
     assert core.invoice_by_download_id("zz", "1001") is None
     assert run("f1", "1", two_invoices())[-1].duplicates == 2   # per-firm dedup still works
+
+
+# ---- WP7b: CLI ----------------------------------------------------------------
+
+def two_firms(paths):
+    write_raw(paths, client_id="c", client_secret="s", selected_firm="a", environment="test",
+              firms=[{"id": "a", "name": "Alpha SRL", "cif": "1", "base_dir": str(paths / "a")},
+                     {"id": "b", "name": "Beta SRL", "cif": "2", "base_dir": str(paths / "b")}])
+
+
+def test_cli_firm_flag_selects_by_cif_or_id(paths, capsys, monkeypatch):
+    two_firms(paths)
+    from efactura_sync import cli
+    assert cli.main(["--firm", "2", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "Beta SRL" in out and "Alpha" not in out
+    assert core.FIRM_OVERRIDE == "2"
+    monkeypatch.setattr(core, "FIRM_OVERRIDE", None)
+    assert cli.main(["--firm", "zz", "status"]) == 2          # unknown firm → clean error
+
+
+# ---- WP7c: UI ------------------------------------------------------------------
+
+def _firms_cfg(harness):
+    (harness.tmp / "config.json").write_text(json.dumps({
+        "client_id": "c", "client_secret": "s", "environment": "test", "selected_firm": "a",
+        "firms": [{"id": "a", "name": "Alpha SRL", "cif": "1", "base_dir": str(harness.tmp / "a")},
+                  {"id": "b", "name": "Beta SRL", "cif": "2", "base_dir": str(harness.tmp / "b")}]}))
+
+
+def test_switcher_lists_firms_and_switches(harness):
+    _firms_cfg(harness)
+    html = harness.client.get("/").get_data(as_text=True)
+    assert 'name="firm"' in html and ">Alpha SRL<" in html and ">Beta SRL<" in html
+    assert 'value="a" selected' in html
+    r = harness.post("/firma", firm="b", next="/facturi")
+    assert r.status_code == 303 and r.headers["Location"].endswith("/facturi")
+    assert json.loads((harness.tmp / "config.json").read_text())["selected_firm"] == "b"
+    assert 'value="b" selected' in harness.client.get("/").get_data(as_text=True)
+    assert harness.post("/firma", firm="zz").status_code == 303   # unknown: ignored, not 500
+
+
+def test_single_firm_shows_name_without_a_select(harness):
+    harness.write_cfg()
+    html = harness.client.get("/").get_data(as_text=True)
+    assert 'name="firm"' not in html and "Firma mea" in html
+
+
+def test_pages_operate_on_the_selected_firm(harness):
+    _firms_cfg(harness)
+    harness.synced()                                   # syncs Alpha (selected)
+    assert (harness.tmp / "a" / "invoices.csv").exists() and not (harness.tmp / "b").exists()
+    assert "FAC-2026-001" in harness.client.get("/facturi").get_data(as_text=True)
+    harness.post("/firma", firm="b")
+    html = harness.client.get("/facturi").get_data(as_text=True)
+    assert "FAC-2026-001" not in html and "Beta SRL" in html
+    assert harness.client.get("/pdf/1001").status_code == 404   # Alpha's file is not Beta's
+
+
+def test_settings_edits_the_selected_firm_only(harness):
+    _firms_cfg(harness)
+    r = harness.post("/setari", client_id="c", client_secret="", cif="RO111", name="Alpha Nou SRL",
+                     environment="test", redirect_uri="x", base_dir=str(harness.tmp / "a2"))
+    assert r.status_code == 303
+    firms = {f["id"]: f for f in json.loads((harness.tmp / "config.json").read_text())["firms"]}
+    assert (firms["a"]["name"], firms["a"]["cif"], firms["a"]["base_dir"]) == ("Alpha Nou SRL", "111", str(harness.tmp / "a2"))
+    assert firms["b"] == {"id": "b", "name": "Beta SRL", "cif": "2", "base_dir": str(harness.tmp / "b")}
+    html = harness.client.get("/setari").get_data(as_text=True)
+    assert 'value="Alpha Nou SRL"' in html and 'value="111"' in html
+
+
+def test_add_and_remove_firms(harness):
+    _firms_cfg(harness)
+    r = harness.post("/firme/adauga", name="Gamma / SRL", cif="RO333")
+    assert r.status_code == 303
+    raw = json.loads((harness.tmp / "config.json").read_text())
+    g = [f for f in raw["firms"] if f["name"] == "Gamma / SRL"][0]
+    assert g["cif"] == "333" and g["base_dir"].endswith("Gamma SRL") and raw["selected_firm"] == g["id"]
+    assert harness.post("/firme/adauga", name="", cif="4").status_code == 400
+    assert harness.post("/firme/adauga", name="X", cif="abc").status_code == 400
+    assert harness.post("/firme/sterge", firm=g["id"]).status_code == 303
+    raw = json.loads((harness.tmp / "config.json").read_text())
+    assert [f["id"] for f in raw["firms"]] == ["a", "b"] and raw["selected_firm"] == "a"
+    for fid in ("a", "b"):
+        harness.post("/firme/sterge", firm=fid)
+    raw = json.loads((harness.tmp / "config.json").read_text())
+    assert len(raw["firms"]) == 1                          # the last firm cannot be removed
+    assert "ultima firmă" in harness.client.get("/setari").get_data(as_text=True)
+
+
+def test_settings_lists_firms_with_actions(harness):
+    _firms_cfg(harness)
+    html = harness.client.get("/setari").get_data(as_text=True)
+    assert 'action="/firme/adauga"' in html and 'action="/firme/sterge"' in html
+    assert html.count('name="firm"') >= 3                  # switcher + per-row actions
+    assert "Adaugă firmă" in html
+
+
+def test_wizard_names_the_first_firm(harness):
+    r = harness.post("/setari", client_id="c", client_secret="s", cif="RO9", name="Prima SRL",
+                     environment="prod", redirect_uri="x", base_dir=str(harness.tmp / "p"), next="/start?step=3")
+    assert r.status_code == 303
+    raw = json.loads((harness.tmp / "config.json").read_text())
+    assert raw["firms"][0]["name"] == "Prima SRL" and raw["firms"][0]["cif"] == "9"
+    html = harness.client.get("/").get_data(as_text=True)
+    assert "Prima SRL" in html
+
+
+def test_wizard_step2_has_a_name_field_with_a_default(harness):
+    html = harness.client.get("/start?step=2").get_data(as_text=True)
+    assert 'name="name"' in html and 'value="Firma mea"' in html

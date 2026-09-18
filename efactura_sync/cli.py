@@ -54,6 +54,7 @@ def cmd_sync(cfg: dict) -> None:
 def cmd_status(cfg: dict) -> None:
     r = core.status_report(cfg)
     print("=== ANAF e-Factura — status ===")
+    print(f"  firm             : {cfg.get('firm_name', '')} ({cfg.get('firm_id', '')})")
     print(f"  environment      : {r.environment}")
     print(f"  cif              : {r.cif}")
     print(f"  last sync        : {r.last_run or 'never'}")
@@ -86,6 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--config", help="Path to config.json (overrides default).")
+    parser.add_argument("--firm", help="Firm to act on (id or CUI); default: the selected one.")
     parser.add_argument("--env", choices=list(core.REST_BASE),
                         help="Override environment (prod/test).")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -111,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
         core.CONFIG_PATH = config_path
     if args.env:
         core.ENV_OVERRIDE = args.env        # honoured by every later load_config()
+    if args.firm:
+        core.FIRM_OVERRIDE = args.firm
 
     try:
         core.ensure_config_dir()

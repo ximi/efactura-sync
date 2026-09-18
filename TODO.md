@@ -31,6 +31,10 @@ Dates are when the decision was made.
   script, so its relative import crashed the app at launch; now absolute.
 - v0.1.0 tagged 2026-09-17: CI green on ubuntu/macos/windows; Release built all
   three bundles on the first run (`macos-15-intel` label confirmed).
+- **Verified live 2026-09-18** (copy of the real database, 11 invoices synced from
+  ANAF production): listing field names are right, `data_creare` is `YYYYMMDDHHMM`
+  (12 chars on every row — the Batch A parser is correct), every invoice got its
+  PDF from `transformare`. Risk 5 closed.
 - **Still unverified:** the Windows `.exe` at runtime (`os.startfile`, no-console
   logging) — it builds, nobody has launched it; antivirus/SmartScreen behaviour on
   the unsigned `.exe`; the Intel-Mac `.app` at runtime.
@@ -106,6 +110,11 @@ certificate holder), the firm is the `cif` parameter on every call, so one login
 can serve many firms if the certificate has SPV rights for each (the accountant
 model, "împuternicit"); a firm whose calls fail with "no right in SPV" is an SPV
 enrolment problem, shown as such.
+
+**Done 2026-09-18** (WP7a `f3292e6`, WP7b+c in the following commit): switcher in the
+header (select, submits on change), Setări → Firme list with Selectează/Șterge and an
+add form, wizard names the first firm, `--firm <id|cui>` on the CLI, every page and
+the sync scoped to the selected firm; driven live with two firms.
 
 Work packages (each check-green; schema change → first real migration):
 

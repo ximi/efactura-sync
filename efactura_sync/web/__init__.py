@@ -262,7 +262,11 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
         tr = translator(current)
         return {"t": tr, "lang": current, "fmt_month": lambda v: fmt_month(v, tr),
                 "csrf": app.config["CSRF_TOKEN"], "version": __version__,
-                "running": app.runner.running}
+                "running": app.runner.running,
+                "firms": raw_firms(), "current_firm": core.selected_firm(core.read_config_raw())}
+
+    def raw_firms():
+        return core.read_config_raw().get("firms", [])
 
     # ---- error pages: never Werkzeug's English boilerplate ------------------ #
 
@@ -339,7 +343,8 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
                "redirect_uri": core.DEFAULT_REDIRECT_URI,
                "base_dir": str(core.DEFAULT_BASE_DIR),
                **stored, "cif": firm.get("cif", ""),
-               "base_dir": firm.get("base_dir") or str(core.DEFAULT_BASE_DIR)}
+               "base_dir": firm.get("base_dir") or str(core.DEFAULT_BASE_DIR),
+               "firm_name": firm.get("name") or core.LEGACY_FIRM_NAME}
         if values:
             raw = {**raw, **values}
         return {"raw": raw, "errors": errors or {}, "next_url": next_url,
@@ -511,16 +516,60 @@ def create_app(open_path=None, shutdown=None, pick_folder=None) -> Flask:
         firm_values = {"cif": values.pop("cif"), "base_dir": values.pop("base_dir")}
         raw.update(values)
         firm = core.selected_firm(raw)
+        name = form.get("name", "").strip()
         if firm:                                     # WP7a: the form edits the selected firm
             firm.update(firm_values)
+            if name:
+                firm["name"] = name
         else:
-            core.add_firm(raw, core.LEGACY_FIRM_NAME, firm_values["cif"], firm_values["base_dir"])
+            core.add_firm(raw, name or core.LEGACY_FIRM_NAME, firm_values["cif"],
+                          firm_values["base_dir"])
         secret = form.get("client_secret", "")
         if secret:                                   # blank keeps the stored secret
             raw["client_secret"] = secret
         core.save_config(raw)
         flash(tr("settings_saved"), "ok")
         return redirect(next_url, code=303)
+
+    # ---- firms (WP7c): the header switcher and the list in Setări -------------- #
+
+    @app.post("/firma")
+    def switch_firm():
+        raw = core.read_config_raw()
+        try:
+            core.select_firm(raw, request.form.get("firm", ""))
+        except core.ConfigError:
+            pass                                     # unknown id: leave the selection as is
+        else:
+            core.save_config(raw)
+        return redirect(_safe_next(request.form.get("next"), url_for("home")), code=303)
+
+    @app.post("/firme/adauga")
+    def add_firm():
+        tr = t()
+        name = request.form.get("name", "").strip()
+        cif = core.normalize_cif(request.form.get("cif", ""))
+        if not name or not cif or not cif.isdigit():
+            return render_settings(400, errors={"firm_new": tr("val_firm_new")})
+        raw = core.read_config_raw()
+        firm = core.add_firm(raw, name, cif)
+        raw["selected_firm"] = firm["id"]            # you add a firm to work on it
+        core.save_config(raw)
+        flash(tr("firm_added", name=name), "ok")
+        return redirect(url_for("settings"), code=303)
+
+    @app.post("/firme/sterge")
+    def remove_firm():
+        tr = t()
+        raw = core.read_config_raw()
+        firm_id = request.form.get("firm", "")
+        if len(raw.get("firms", [])) <= 1:
+            flash(tr("firm_last"), "info")
+        elif any(f["id"] == firm_id for f in raw["firms"]):
+            core.remove_firm(raw, firm_id)
+            core.save_config(raw)
+            flash(tr("firm_removed"), "ok")
+        return redirect(url_for("settings"), code=303)
 
     @app.post("/limba")
     def set_language():

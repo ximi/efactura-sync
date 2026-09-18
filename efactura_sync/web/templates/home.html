@@ -3,7 +3,7 @@
 {% block content %}
 <div class="row" style="justify-content: space-between; margin-bottom: 16px;">
   <div>
-    <h1 style="margin:0">{{ t('nav_home') }}</h1>
+    <h1 style="margin:0">{{ t('nav_home') }}{% if current_firm %} <span class="muted" style="font-weight: 500;">· {{ current_firm.name }}</span>{% endif %}</h1>
     {% if report.environment != 'prod' %}<div class="muted" style="font-size: 13px;">{{ t('test_mode') }}</div>{% endif %}
   </div>
   <form method="post" action="{{ url_for('start_sync') }}">

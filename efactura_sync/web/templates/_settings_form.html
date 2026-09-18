@@ -8,6 +8,9 @@
   {% if config_problem %}<div class="flash warn-border" role="alert">{{ t('config_corrupt') }}</div>{% endif %}
   {% if errors %}<div class="flash warn-border" role="alert" tabindex="-1" autofocus>{{ t('val_fix') }}</div>{% endif %}
 
+  <label for="name">{{ t('firm_name') }}</label>
+  <input id="name" name="name" value="{{ raw.get('firm_name', '') }}" autocomplete="off">
+
   <label for="client_id">{{ t('client_id') }}</label>
   <input id="client_id" name="client_id" value="{{ raw.get('client_id', '') }}" autocomplete="off"
          {% if errors.client_id %}aria-invalid="true" aria-describedby="client_id-err"{% endif %}>

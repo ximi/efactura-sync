@@ -5,6 +5,39 @@
 
 {% include "_settings_form.html" %}
 
+<h2>{{ t('firms') }}</h2>
+<div class="card">
+  {% if errors and errors.firm_new %}<div class="flash warn-border" role="alert">{{ errors.firm_new }}</div>{% endif %}
+  <table style="margin-bottom: 12px;">
+    <tbody>
+    {% for f in firms %}
+      <tr>
+        <td>{{ f.name }}{% if current_firm and f.id == current_firm.id %} <span class="badge">{{ t('firm_selected') }}</span>{% endif %}<div class="muted cif">CUI {{ f.cif }}</div></td>
+        <td class="nowrap" style="text-align: right;">
+          {% if not current_firm or f.id != current_firm.id %}
+          <form method="post" action="{{ url_for('switch_firm') }}" style="display:inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ url_for('settings') }}">
+            <input type="hidden" name="firm" value="{{ f.id }}"><button type="submit">{{ t('firm_select') }}</button>
+          </form>
+          {% endif %}
+          <form method="post" action="{{ url_for('remove_firm') }}" style="display:inline" onsubmit="return confirm({{ t('firm_remove') | tojson }} + ' — ' + {{ f.name | tojson }} + '?')">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="firm" value="{{ f.id }}">
+            <button type="submit" {{ 'disabled' if firms|length <= 1 }}>{{ t('firm_remove') }}</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="{{ url_for('add_firm') }}" class="row">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>{{ t('firm_name') }} <input name="name" autocomplete="off" required></label>
+    <label>{{ t('cif') }} <input name="cif" inputmode="numeric" autocomplete="off" required style="width: 12ch;"></label>
+    <button type="submit" class="primary">{{ t('firm_add') }}</button>
+  </form>
+  <p class="hint muted" style="margin: 8px 0 0;">{{ t('firm_add_hint') }}</p>
+</div>
+
 <h2>{{ t('auth') }}</h2>
 {% include "_auth.html" %}
 

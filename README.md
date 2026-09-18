@@ -52,6 +52,11 @@ primite din ultimele 60 de zile apar ca PDF în dosarul ales, pe ani și luni, i
 contabil. Dacă aplicația rulează deja, un nou dublu-click doar redeschide pagina. Se
 închide din *Setări → Închide aplicația* sau singură după 30 de minute de inactivitate.
 
+**Mai multe firme (contabili):** în *Setări → Firme* adaugi fiecare firmă (nume + CUI);
+în antet apare un selector de firmă. Aplicația lucrează mereu pentru firma selectată —
+*Sincronizează*, *Facturi* și dosarul sunt ale ei. Autentificarea la ANAF este una singură:
+certificatul tău trebuie să aibă drepturi în SPV (împuternicire) pentru fiecare firmă.
+
 **Actualizare:** descarcă versiunea nouă și înlocuiește aplicația. Setările și facturile
 descărcate rămân (setările în dosarul `.anaf_invoices` din dosarul tău de utilizator).
 
@@ -93,6 +98,11 @@ full redirected address back — the page itself may not load, that's expected).
 60 days land as PDFs in your folder by year/month; the *Invoices* page lists them with a
 *PDF* button; `invoices.csv` is for your accountant. Launching again while it runs just
 reopens the page. Quit from *Settings → Quit the app*, or it exits after 30 idle minutes.
+
+**Several firms (accountants)** — add each firm (name + CUI) under *Settings → Firms*; a firm
+switcher appears in the header. The app always works on the selected firm — *Synchronize*,
+*Invoices* and the folder are hers. One ANAF login serves all firms your certificate has SPV
+rights for.
 
 **Update** — download the new version and replace the app; settings and invoices stay.
 

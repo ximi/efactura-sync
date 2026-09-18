@@ -82,6 +82,19 @@
     <a href="{{ url_for('settings') }}" class="{{ 'active' if request.endpoint == 'settings' }}"{% if request.endpoint == 'settings' %} aria-current="page"{% endif %}>{{ t('nav_settings') }}</a>
   </nav>
   <span class="spacer"></span>
+  {% if firms|length > 1 %}
+  <form method="post" action="{{ url_for('switch_firm') }}" class="row" style="gap: 6px;">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="next" value="{{ request.path }}">
+    <label class="muted" for="firm-switch" style="font-size: 13px;">{{ t('firm') }}</label>
+    <select id="firm-switch" name="firm" aria-label="{{ t('firm_switch') }}" onchange="this.form.submit()">
+      {% for f in firms %}<option value="{{ f.id }}" {{ 'selected' if current_firm and f.id == current_firm.id }}>{{ f.name }}</option>{% endfor %}
+    </select>
+    <noscript><button type="submit">{{ t('firm_switch') }}</button></noscript>
+  </form>
+  {% elif current_firm %}
+  <span class="muted" style="font-size: 13px;">{{ current_firm.name }}</span>
+  {% endif %}
   <form method="post" action="{{ url_for('set_language') }}">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="next" value="{{ request.path }}">

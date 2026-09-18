@@ -2,7 +2,7 @@
 {% block title %}{{ t('nav_invoices') }} · {{ t('app') }}{% endblock %}
 {% block content %}
 <div class="row" style="justify-content: space-between; margin-bottom: 16px;">
-  <h1 style="margin:0">{{ t('nav_invoices') }}</h1>
+  <h1 style="margin:0">{{ t('nav_invoices') }}{% if current_firm %} <span class="muted" style="font-weight: 500;">· {{ current_firm.name }}</span>{% endif %}</h1>
   <form method="post" action="{{ url_for('open_folder') }}">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button type="submit">{{ t('open_folder') }}</button>
