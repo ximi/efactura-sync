@@ -63,11 +63,14 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4          # for docs/GHID.pdf
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
-          files: artifacts/*
+          files: |
+            artifacts/*
+            docs/GHID.pdf
           generate_release_notes: true

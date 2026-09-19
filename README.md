@@ -10,6 +10,9 @@ English); runs on macOS and Windows with nothing to install.*
 
 ## Pentru utilizatori · For users
 
+📘 **Ghid de utilizare cu capturi de ecran:** [docs/GHID.md](docs/GHID.md) · [PDF](docs/GHID.pdf)
+(atașat și fiecărei versiuni din Releases). *User guide with screenshots (Romanian).*
+
 ### 🇷🇴 Română
 
 **Ce ai nevoie (o singură dată, înainte de instalare)**
@@ -237,6 +240,13 @@ python anaf_invoices.py ui          # web UI (or: python -m efactura_sync)
 The engine lives in `efactura_sync/core.py` and reports progress as events;
 `efactura_sync/cli.py` is the terminal front end; `efactura_sync/web/` is the
 browser UI. `anaf_invoices.py` is a thin compatibility shim.
+
+### Regenerating the user guide
+
+```bash
+pip install -r requirements-docs.txt && playwright install chromium
+python docs/make_guide.py            # seeds demo data, captures docs/screenshots/, writes docs/GHID.pdf
+```
 
 ### Building the desktop bundles
 
